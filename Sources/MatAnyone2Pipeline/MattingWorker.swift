@@ -38,6 +38,9 @@ public final class MattingWorker: @unchecked Sendable {
     private var version: UInt32 = 0
     private var droppedFrames = 0
     private var displayLatencyMs: Double = 0
+    private var overlayBytes: [UInt8] = []
+    private var overlayVersion: UInt32 = 0
+    private var overlayStatusLine = false
 
     // worker-only
     private var thread: Thread?
@@ -67,6 +70,9 @@ public final class MattingWorker: @unchecked Sendable {
     private var fpsWindowStartNs: UInt64 = 0
     private var fpsWindowCount = 0
     private var matteFPS: Double = 0
+    private let overlayRenderer = OverlayRenderer()
+    private var overlayLines: (title: String, detail: String) = ("", "")
+    private var lastOverlayRenderNs: UInt64 = 0
 
     public init(
         modelsDirectory: URL, workingWidth: Int, workingHeight: Int,
@@ -186,6 +192,18 @@ public final class MattingWorker: @unchecked Sendable {
         condition.lock()
         displayLatencyMs = ms
         condition.unlock()
+    }
+
+    /// The overlay band when it changed since the previous poll. Tracking
+    /// status is only rendered when `showStatusLine` is set.
+    public func pollOverlay(showStatusLine: Bool, lastVersion: UInt32) -> (
+        bytes: [UInt8], version: UInt32
+    )? {
+        condition.lock()
+        defer { condition.unlock() }
+        overlayStatusLine = showStatusLine
+        guard overlayVersion != lastVersion, !overlayBytes.isEmpty else { return nil }
+        return (overlayBytes, overlayVersion)
     }
 
     public func status() -> StatusSnapshot {
@@ -695,10 +713,35 @@ public final class MattingWorker: @unchecked Sendable {
         s.alignedLatencyMs = displayLatencyMs
         s.droppedFrames = droppedFrames
         s.propsRegions = calibration.propsRegions
-        if s != snapshot {
+        let changed = s != snapshot
+        let phaseChanged = s.phase != snapshot.phase
+        if changed {
             snapshot = s
             version &+= 1
         }
+        let wantStatusLine = overlayStatusLine
+        condition.unlock()
+        if changed {
+            renderOverlayIfNeeded(
+                s, phaseChanged: phaseChanged, showStatusLine: wantStatusLine, now: now)
+        }
+    }
+
+    /// Re-renders the band when its text changed, at most ten times a second
+    /// unless the phase changed.
+    private func renderOverlayIfNeeded(
+        _ s: StatusSnapshot, phaseChanged: Bool, showStatusLine: Bool, now: UInt64
+    ) {
+        if s.phase == .tracking && !showStatusLine { return }
+        let lines = StatusFormatter.overlayLines(s)
+        if lines == overlayLines { return }
+        if !phaseChanged && now < lastOverlayRenderNs + 100_000_000 { return }
+        overlayLines = lines
+        lastOverlayRenderNs = now
+        let bytes = overlayRenderer.render(title: lines.title, detail: lines.detail)
+        condition.lock()
+        overlayBytes = bytes
+        overlayVersion &+= 1
         condition.unlock()
     }
 }

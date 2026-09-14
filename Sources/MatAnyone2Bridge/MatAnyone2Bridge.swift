@@ -15,6 +15,8 @@ private final class BridgeContext: @unchecked Sendable {
     /// The C caller reads the matte through a pointer, so the bridge keeps
     /// its own copy that stays valid until the next poll.
     private let alphaBuffer: UnsafeMutablePointer<UInt8>
+    private let overlayBuffer: UnsafeMutablePointer<UInt8>
+    private var overlayVersion: UInt32 = 0
 
     init(worker: MattingWorker, workingWidth: Int, workingHeight: Int) {
         self.worker = worker
@@ -22,10 +24,31 @@ private final class BridgeContext: @unchecked Sendable {
         self.workingHeight = workingHeight
         alphaBuffer = .allocate(capacity: workingWidth * workingHeight)
         alphaBuffer.initialize(repeating: 0, count: workingWidth * workingHeight)
+        let overlaySize = OverlayRenderer.bytesPerRow * OverlayRenderer.height
+        overlayBuffer = .allocate(capacity: overlaySize)
+        overlayBuffer.initialize(repeating: 0, count: overlaySize)
     }
 
     deinit {
         alphaBuffer.deallocate()
+        overlayBuffer.deallocate()
+    }
+
+    /// Copies the band into the bridge-owned buffer; nil when unchanged.
+    func copyOverlay(showStatusLine: Bool) -> (UnsafePointer<UInt8>, UInt32)? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard
+            let overlay = worker.pollOverlay(
+                showStatusLine: showStatusLine, lastVersion: overlayVersion)
+        else { return nil }
+        overlayVersion = overlay.version
+        overlay.bytes.withUnsafeBufferPointer { src in
+            overlayBuffer.update(
+                from: src.baseAddress!,
+                count: min(src.count, OverlayRenderer.bytesPerRow * OverlayRenderer.height))
+        }
+        return (UnsafePointer(overlayBuffer), overlay.version)
     }
 
     func copyMatte(_ matte: MatteResult) -> UnsafePointer<UInt8> {
@@ -215,6 +238,13 @@ public func ma2PollOverlay(
     _ pointer: UnsafeMutableRawPointer?, _ showStatusLine: Bool,
     _ out: UnsafeMutablePointer<ma2_overlay>?
 ) -> Bool {
-    // Overlay rendering arrives with the overlay renderer.
-    false
+    guard let context = context(pointer), let out,
+        let (bytes, version) = context.copyOverlay(showStatusLine: showStatusLine)
+    else { return false }
+    out.pointee.bgra = bytes
+    out.pointee.width = UInt32(OverlayRenderer.width)
+    out.pointee.height = UInt32(OverlayRenderer.height)
+    out.pointee.stride = UInt32(OverlayRenderer.bytesPerRow)
+    out.pointee.version = version
+    return true
 }

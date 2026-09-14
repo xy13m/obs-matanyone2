@@ -63,6 +63,8 @@ void renderer::destroy() {
     full_stage_ = nullptr;
     gs_texture_destroy(matte_);
     matte_ = nullptr;
+    gs_texture_destroy(overlay_);
+    overlay_ = nullptr;
     gs_texrender_destroy(work_);
     work_ = nullptr;
     gs_texrender_destroy(full_);
@@ -206,6 +208,44 @@ void renderer::upload_matte(const ma2_matte &matte) {
         return;
     gs_texture_set_image(matte_, matte.alpha, matte.width, false);
     has_matte_ = true;
+}
+
+void renderer::upload_overlay(const ma2_overlay &overlay) {
+    if (!overlay.bgra || !overlay.width || !overlay.height)
+        return;
+    if (overlay_ && (overlay_width_ != overlay.width || overlay_height_ != overlay.height)) {
+        gs_texture_destroy(overlay_);
+        overlay_ = nullptr;
+    }
+    if (!overlay_) {
+        overlay_ =
+            gs_texture_create(overlay.width, overlay.height, GS_BGRA, 1, nullptr, GS_DYNAMIC);
+        overlay_width_ = overlay.width;
+        overlay_height_ = overlay.height;
+    }
+    if (overlay_)
+        gs_texture_set_image(overlay_, overlay.bgra, overlay.stride, false);
+}
+
+// Premultiplied band scaled to the output width, drawn over whatever the
+// filter produced (composite or passthrough).
+void renderer::draw_overlay() {
+    if (!overlay_ || !frame_width_ || !frame_height_)
+        return;
+    gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+    if (!effect)
+        return;
+    const float scale = static_cast<float>(frame_width_) / static_cast<float>(overlay_width_);
+
+    gs_blend_state_push();
+    gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
+    gs_matrix_push();
+    gs_matrix_scale3f(scale, scale, 1.0f);
+    gs_effect_set_texture(gs_effect_get_param_by_name(effect, "image"), overlay_);
+    while (gs_effect_loop(effect, "Draw"))
+        gs_draw_sprite(overlay_, 0, overlay_width_, overlay_height_);
+    gs_matrix_pop();
+    gs_blend_state_pop();
 }
 
 void renderer::clear_matte() {

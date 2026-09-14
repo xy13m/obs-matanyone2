@@ -53,6 +53,10 @@ class renderer {
     // obs_source_skip_video_filter when there is no matte or no frame.
     void draw(obs_source_t *filter, const render_params &params);
 
+    // Uploads a new overlay band and draws it across the top of the output.
+    void upload_overlay(const ma2_overlay &overlay);
+    void draw_overlay();
+
     uint32_t working_width() const { return working_width_; }
     uint32_t working_height() const { return working_height_; }
 
@@ -75,6 +79,9 @@ class renderer {
     gs_texrender_t *work_ = nullptr;
     gs_texture_t *matte_ = nullptr;
     bool has_matte_ = false;
+    gs_texture_t *overlay_ = nullptr;
+    uint32_t overlay_width_ = 0;
+    uint32_t overlay_height_ = 0;
 
     // Three-deep staging ring: stage frame N, map frame N-2 so the map never
     // waits for the GPU.

@@ -437,10 +437,14 @@ void filter_render(void *data, gs_effect_t *) {
 
     ma2::render_params params;
     int32_t phase;
+    bool overlay_calibration;
+    bool overlay_always;
     {
         std::lock_guard lock(state->mutex);
         params = state->params;
         phase = state->status.phase;
+        overlay_calibration = state->overlay_calibration;
+        overlay_always = state->overlay_always;
     }
 
     const uint64_t now = os_gettime_ns();
@@ -458,6 +462,14 @@ void filter_render(void *data, gs_effect_t *) {
         state->renderer.clear_matte();
 
     state->renderer.draw(state->source, params);
+
+    ma2_overlay overlay{};
+    if (ma2_poll_overlay(state->context, overlay_always, &overlay))
+        state->renderer.upload_overlay(overlay);
+    const bool overlay_visible =
+        phase == MA2_PHASE_TRACKING ? overlay_always : overlay_calibration || overlay_always;
+    if (overlay_visible)
+        state->renderer.draw_overlay();
 }
 
 obs_source_info filter_info = {
