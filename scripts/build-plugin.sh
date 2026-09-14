@@ -59,7 +59,7 @@ xcrun --sdk macosx clang++ \
     -I "$root_dir/Plugin/include" \
     -I "$obs_source/libobs" \
     -I "$simde_source" \
-    -I "$root_dir/Sources/MatAnyone2Bridge/include" \
+    -I "$root_dir/Sources/MatAnyone2BridgeABI/include" \
     -F /Applications/OBS.app/Contents/Frameworks \
     -framework libobs \
     -L "$bridge_build" -lMatAnyone2MattingBridge \

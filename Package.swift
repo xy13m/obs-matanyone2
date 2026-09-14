@@ -38,10 +38,12 @@ let package = Package(
                 "ObjCExceptionCatcher",
             ]
         ),
-        // C ABI over the pipeline, built as a dylib and linked by the C++ module.
-        // The C header lives in Sources/MatAnyone2Bridge/include and is added to
-        // the clang++ include path by scripts/build-plugin.sh.
-        .target(name: "MatAnyone2Bridge", dependencies: ["MatAnyone2Pipeline"]),
+        // The C ABI header, shared by the Swift bridge (imported as a module)
+        // and the C++ OBS module (scripts/build-plugin.sh adds the include path).
+        .target(name: "MatAnyone2BridgeABI", publicHeadersPath: "include"),
+        // Implements the C ABI over the pipeline; built as a dylib.
+        .target(
+            name: "MatAnyone2Bridge", dependencies: ["MatAnyone2Pipeline", "MatAnyone2BridgeABI"]),
         .executableTarget(name: "MatAnyone2Benchmark", dependencies: ["MatAnyone2Pipeline"]),
         .testTarget(name: "MatAnyone2CoreTests", dependencies: ["MatAnyone2Core"]),
         .testTarget(name: "MatAnyone2PipelineTests", dependencies: ["MatAnyone2Pipeline"]),
