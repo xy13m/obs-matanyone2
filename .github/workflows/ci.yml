@@ -36,3 +36,6 @@ jobs:
 
       - name: Test
         run: swift test
+
+      - name: Frame ring tests (C++)
+        run: swift run FrameRingTests

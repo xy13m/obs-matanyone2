@@ -45,8 +45,15 @@ let package = Package(
         .target(
             name: "MatAnyone2Bridge", dependencies: ["MatAnyone2Pipeline", "MatAnyone2BridgeABI"]),
         .executableTarget(name: "MatAnyone2Benchmark", dependencies: ["MatAnyone2Pipeline"]),
+        // C++ tests for the header-only alignment ring in Plugin/src; run with
+        // `swift run FrameRingTests`.
+        .executableTarget(
+            name: "FrameRingTests",
+            cxxSettings: [.headerSearchPath("../../Plugin/src")]
+        ),
         .testTarget(name: "MatAnyone2CoreTests", dependencies: ["MatAnyone2Core"]),
         .testTarget(name: "MatAnyone2PipelineTests", dependencies: ["MatAnyone2Pipeline"]),
     ],
-    swiftLanguageModes: [.v6]
+    swiftLanguageModes: [.v6],
+    cxxLanguageStandard: .cxx20
 )

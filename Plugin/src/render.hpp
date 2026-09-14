@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "frame_ring.hpp"
+
 #include <MatAnyone2Bridge.h>
 #include <obs-module.h>
 
@@ -50,8 +52,10 @@ class renderer {
     bool has_matte() const { return has_matte_; }
 
     // Draws the composite for the current frame. Falls back to
-    // obs_source_skip_video_filter when there is no matte or no frame.
-    void draw(obs_source_t *filter, const render_params &params);
+    // obs_source_skip_video_filter when there is no matte or no frame. In
+    // aligned mode returns the capture-to-display latency of the drawn pair
+    // in milliseconds, otherwise 0.
+    float draw(obs_source_t *filter, const render_params &params, uint64_t now_ns);
 
     // Uploads a new overlay band and draws it across the top of the output.
     void upload_overlay(const ma2_overlay &overlay);
@@ -61,8 +65,9 @@ class renderer {
     uint32_t working_height() const { return working_height_; }
 
   private:
-    bool render_target(obs_source_t *filter);
-    void downscale();
+    bool render_target(obs_source_t *filter, gs_texrender_t *into);
+    void downscale(gs_texture_t *source);
+    gs_texrender_t *ring_texrender(size_t slot);
     void stage_and_submit(ma2_context_t context, uint64_t now_ns);
     void submit_full_resolution(ma2_context_t context, uint64_t now_ns);
     void draw_texture(gs_texture_t *texture, const char *technique);
@@ -72,6 +77,11 @@ class renderer {
     uint32_t frame_width_ = 0;
     uint32_t frame_height_ = 0;
     uint64_t frame_id_ = 0;
+    uint64_t last_frame_time_ = 0;
+    // The texrender holding the frame captured this call: full_ in lowest
+    // latency mode, a ring slot in aligned mode.
+    gs_texrender_t *current_ = nullptr;
+    uint64_t matte_frame_id_ = 0;
 
     gs_effect_t *downscale_effect_ = nullptr;
     gs_effect_t *composite_effect_ = nullptr;
@@ -79,6 +89,11 @@ class renderer {
     gs_texrender_t *work_ = nullptr;
     gs_texture_t *matte_ = nullptr;
     bool has_matte_ = false;
+    // Aligned mode keeps recent full-resolution frames so each matte can be
+    // composited with the frame it was computed from. Created on first use.
+    static constexpr size_t ring_size = 6;
+    std::array<gs_texrender_t *, ring_size> ring_{};
+    frame_ring<ring_size> ring_ids_;
     gs_texture_t *overlay_ = nullptr;
     uint32_t overlay_width_ = 0;
     uint32_t overlay_height_ = 0;

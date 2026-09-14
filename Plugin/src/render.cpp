@@ -65,6 +65,12 @@ void renderer::destroy() {
     matte_ = nullptr;
     gs_texture_destroy(overlay_);
     overlay_ = nullptr;
+    for (auto &texrender : ring_) {
+        gs_texrender_destroy(texrender);
+        texrender = nullptr;
+    }
+    ring_ids_.clear();
+    current_ = nullptr;
     gs_texrender_destroy(work_);
     work_ = nullptr;
     gs_texrender_destroy(full_);
@@ -80,11 +86,31 @@ void renderer::destroy() {
 
 bool renderer::capture(obs_source_t *filter, ma2_context_t context, const render_params &params,
                        uint64_t now_ns) {
-    if (!full_ || !render_target(filter))
+    if (!full_)
         return false;
+    // OBS renders a filter once per view (program, preview, projector). Only
+    // the first render of a video frame captures and submits; later ones
+    // reuse the textures.
+    const uint64_t frame_time = obs_get_video_frame_time();
+    if (frame_time == last_frame_time_ && current_)
+        return true;
+    last_frame_time_ = frame_time;
+
     frame_id_++;
+    gs_texrender_t *into = full_;
+    if (params.alignment == alignment_mode::aligned) {
+        into = ring_texrender(ring_ids_.push(frame_id_, now_ns));
+        if (!into)
+            into = full_;
+    }
+    if (!render_target(filter, into)) {
+        current_ = nullptr;
+        return false;
+    }
+    current_ = into;
+    gs_texture_t *source = gs_texrender_get_texture(current_);
     if (params.gpu_downscale) {
-        downscale();
+        downscale(source);
         stage_and_submit(context, now_ns);
     } else {
         submit_full_resolution(context, now_ns);
@@ -92,9 +118,15 @@ bool renderer::capture(obs_source_t *filter, ma2_context_t context, const render
     return true;
 }
 
+gs_texrender_t *renderer::ring_texrender(size_t slot) {
+    if (!ring_[slot])
+        ring_[slot] = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
+    return ring_[slot];
+}
+
 // Same setup libobs uses in obs_source_process_filter_begin for an async
 // parent: premultiplied blending, cleared target, orthographic projection.
-bool renderer::render_target(obs_source_t *filter) {
+bool renderer::render_target(obs_source_t *filter, gs_texrender_t *into) {
     obs_source_t *target = obs_filter_get_target(filter);
     if (!target)
         return false;
@@ -105,8 +137,8 @@ bool renderer::render_target(obs_source_t *filter) {
     frame_width_ = width;
     frame_height_ = height;
 
-    gs_texrender_reset(full_);
-    if (!gs_texrender_begin(full_, width, height))
+    gs_texrender_reset(into);
+    if (!gs_texrender_begin(into, width, height))
         return false;
     gs_blend_state_push();
     gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA, GS_BLEND_ONE,
@@ -116,12 +148,11 @@ bool renderer::render_target(obs_source_t *filter) {
     gs_ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -100.0f, 100.0f);
     obs_source_video_render(target);
     gs_blend_state_pop();
-    gs_texrender_end(full_);
+    gs_texrender_end(into);
     return true;
 }
 
-void renderer::downscale() {
-    gs_texture_t *source = gs_texrender_get_texture(full_);
+void renderer::downscale(gs_texture_t *source) {
     if (!source)
         return;
     gs_texrender_reset(work_);
@@ -182,7 +213,7 @@ void renderer::stage_and_submit(ma2_context_t context, uint64_t now_ns) {
 // downscale on the CPU. Maps immediately, so it stalls; that is the point of
 // measuring it.
 void renderer::submit_full_resolution(ma2_context_t context, uint64_t now_ns) {
-    gs_texture_t *texture = gs_texrender_get_texture(full_);
+    gs_texture_t *texture = current_ ? gs_texrender_get_texture(current_) : nullptr;
     if (!texture || !context)
         return;
     if (full_stage_ && (gs_stagesurface_get_width(full_stage_) != frame_width_ ||
@@ -207,6 +238,7 @@ void renderer::upload_matte(const ma2_matte &matte) {
     if (!matte_ || matte.width != working_width_ || matte.height != working_height_)
         return;
     gs_texture_set_image(matte_, matte.alpha, matte.width, false);
+    matte_frame_id_ = matte.frame_id;
     has_matte_ = true;
 }
 
@@ -252,11 +284,19 @@ void renderer::clear_matte() {
     has_matte_ = false;
 }
 
-void renderer::draw(obs_source_t *filter, const render_params &params) {
-    gs_texture_t *frame = full_ ? gs_texrender_get_texture(full_) : nullptr;
+float renderer::draw(obs_source_t *filter, const render_params &params, uint64_t now_ns) {
+    gs_texture_t *frame = current_ ? gs_texrender_get_texture(current_) : nullptr;
+    float latency_ms = 0.0f;
+    if (params.alignment == alignment_mode::aligned && !ring_ids_.empty()) {
+        const alignment_choice choice = choose_aligned(ring_ids_, matte_frame_id_, now_ns);
+        if (ring_[choice.slot]) {
+            frame = gs_texrender_get_texture(ring_[choice.slot]);
+            latency_ms = static_cast<float>(choice.latency_ns) / 1.0e6f;
+        }
+    }
     if (!frame || !has_matte_ || !composite_effect_) {
         obs_source_skip_video_filter(filter);
-        return;
+        return 0.0f;
     }
     const char *technique = "Draw";
     switch (params.preview) {
@@ -270,6 +310,7 @@ void renderer::draw(obs_source_t *filter, const render_params &params) {
         break;
     }
     draw_texture(frame, technique);
+    return latency_ms;
 }
 
 // Mirrors render_filter_tex in libobs so the output matches what

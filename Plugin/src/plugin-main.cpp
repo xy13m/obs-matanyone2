@@ -6,6 +6,7 @@
 #include <obs-module.h>
 #include <util/platform.h>
 
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -35,6 +36,7 @@ struct filter_state {
     ma2_status status{};
     uint32_t last_status_version = 0;
     float tick_accumulator = 0.0f;
+    float reported_latency_ms = 0.0f;
     std::string models_error;
     obs_hotkey_id hotkey_ids[5] = {OBS_INVALID_HOTKEY_ID, OBS_INVALID_HOTKEY_ID,
                                    OBS_INVALID_HOTKEY_ID, OBS_INVALID_HOTKEY_ID,
@@ -461,7 +463,12 @@ void filter_render(void *data, gs_effect_t *) {
     if (phase != MA2_PHASE_TRACKING && phase != MA2_PHASE_SEEDING && phase != MA2_PHASE_ERROR)
         state->renderer.clear_matte();
 
-    state->renderer.draw(state->source, params);
+    const float latency_ms = state->renderer.draw(state->source, params, now);
+    // Only touch the worker when the number moved; it is shown in the status line.
+    if (std::fabs(latency_ms - state->reported_latency_ms) > 1.0f) {
+        state->reported_latency_ms = latency_ms;
+        ma2_set_display_latency(state->context, latency_ms);
+    }
 
     ma2_overlay overlay{};
     if (ma2_poll_overlay(state->context, overlay_always, &overlay))
