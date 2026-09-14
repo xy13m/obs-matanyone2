@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The hosted macOS runners are Apple Silicon but cannot exercise the Neural
+# Engine, Core ML model loading or the capture card. This workflow only checks
+# formatting, builds the Swift targets and runs the OBS-free unit tests.
+# Everything involving inference is measured locally with the benchmark tool.
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select the newest Xcode 26
+        run: |
+          xcode="$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          swift --version
+
+      - name: Cache SwiftPM checkouts
+        uses: actions/cache@v4
+        with:
+          path: .build/checkouts
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+
+      - name: Check formatting
+        run: scripts/check-format.sh
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
