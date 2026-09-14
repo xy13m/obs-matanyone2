@@ -297,6 +297,15 @@ private struct Harness {
         #expect(h.engine.seeds.count == 1)
     }
 
+    @Test func framesBeforeTrackingAreNotCountedAsDropped() throws {
+        let h = try Harness()
+        defer { h.stop() }
+        #expect(h.waitForPhase(.uncalibrated))
+        for id in 1...20 { h.submit(id: UInt64(id)) }
+        Thread.sleep(forTimeInterval: 0.1)
+        #expect(h.worker.status().droppedFrames == 0)
+    }
+
     @Test func clearResetsToUncalibrated() throws {
         let h = try Harness()
         defer { h.stop() }

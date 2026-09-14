@@ -37,6 +37,8 @@ public final class MattingWorker: @unchecked Sendable {
     private var snapshot: StatusSnapshot
     private var version: UInt32 = 0
     private var droppedFrames = 0
+    // Only while tracking; earlier phases keep just the newest frame by design.
+    private var countDrops = false
     private var displayLatencyMs: Double = 0
     private var overlayBytes: [UInt8] = []
     private var overlayVersion: UInt32 = 0
@@ -143,7 +145,7 @@ public final class MattingWorker: @unchecked Sendable {
             pending = nil
         }
         guard let buffer = pool?.take() else {
-            droppedFrames += 1
+            if countDrops { droppedFrames += 1 }
             condition.unlock()
             return false
         }
@@ -155,7 +157,7 @@ public final class MattingWorker: @unchecked Sendable {
 
         condition.lock()
         if let replaced = pending {
-            droppedFrames += 1
+            if countDrops { droppedFrames += 1 }
             pool?.give(replaced)
         }
         pending = buffer
@@ -607,6 +609,9 @@ public final class MattingWorker: @unchecked Sendable {
         fpsWindowCount = 0
         matteFPS = 0
         nextInferenceNs = 0
+        condition.lock()
+        droppedFrames = 0
+        condition.unlock()
     }
 
     private func currentDroppedFrames() -> Int {
@@ -679,11 +684,12 @@ public final class MattingWorker: @unchecked Sendable {
         guard newPhase != phase || newPhase == .error else { return }
         log("phase \(phase) -> \(newPhase)")
         phase = newPhase
+        condition.lock()
+        countDrops = newPhase == .tracking
         if newPhase != .error {
-            condition.lock()
             snapshot.message = ""
-            condition.unlock()
         }
+        condition.unlock()
         publishStatus()
     }
 
