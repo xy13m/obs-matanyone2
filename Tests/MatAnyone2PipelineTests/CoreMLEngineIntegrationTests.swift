@@ -51,7 +51,9 @@ import Testing
             modelsDirectory: Self.modelsDirectory, computeUnits: .cpuAndNeuralEngine)
         let w = engine.workingWidth
         let h = engine.workingHeight
-        #expect(w == 512 && h == 288)
+        let manifest = try ModelManifest(
+            contentsOf: Self.modelsDirectory.appendingPathComponent("manifest.json"))
+        #expect(w == manifest.workingWidth && h == manifest.workingHeight)
 
         let first = scene(width: w, height: h, centerX: w / 3)
         let clock = ContinuousClock()
