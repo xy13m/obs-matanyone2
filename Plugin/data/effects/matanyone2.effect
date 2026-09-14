@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Composites the source with the working-resolution matte. The matte texture
-// is sampled with linear filtering; the edge refinement effects replace the
-// plain sample with a guided upsampling.
+// Composites the source with the working-resolution matte. `refinement`
+// selects how the matte is upscaled: 0 linear, 1 joint bilateral upsampling
+// guided by the frame, 2 guided filter (coefficients from guided.effect).
 
 uniform float4x4 ViewProj;
 uniform texture2d image;
 uniform texture2d matte;
+uniform texture2d lowres;     // working-resolution frame, for bilateral
+uniform texture2d coeff;      // (mean_a, mean_b) from the guided filter
 uniform float2 output_size;   // full-resolution size in pixels
+uniform float2 lowres_size;   // working-resolution size in pixels
 uniform float checker_size;   // checkerboard square size in pixels
+uniform int refinement;
 
 sampler_state linear_clamp {
 	Filter = Linear;
@@ -29,36 +33,71 @@ VertData VSDefault(VertData v_in)
 	return vert_out;
 }
 
-float4 straight_color(float2 uv)
+float3 straight_rgb(float4 color)
 {
-	float4 color = image.Sample(linear_clamp, uv);
-	// OBS hands the filter premultiplied color; un-premultiply so edges keep
-	// their true color before the matte is applied.
-	color.rgb = max(float3(0.0, 0.0, 0.0), color.rgb / max(color.a, 0.00001));
-	return color;
+	return max(float3(0.0, 0.0, 0.0), color.rgb / max(color.a, 0.00001));
+}
+
+// Joint bilateral upsampling: 5x5 working-resolution taps around the pixel,
+// weighted by distance and by colour similarity between the full-resolution
+// pixel and the working-resolution frame at the tap.
+float bilateral_alpha(float2 uv, float3 guide)
+{
+	float2 texel = 1.0 / lowres_size;
+	float2 base = (floor(uv * lowres_size) + 0.5) * texel;
+	float2 offset = (uv - base) * lowres_size;   // -0.5..0.5 in low-res texels
+	float sum = 0.0;
+	float weight_sum = 0.0;
+	for (int y = -2; y <= 2; y++) {
+		for (int x = -2; x <= 2; x++) {
+			float2 d = float2(x, y) - offset;
+			float2 tap = base + float2(x, y) * texel;
+			float3 c = straight_rgb(lowres.Sample(linear_clamp, tap));
+			float3 diff = c - guide;
+			float w = exp(-dot(d, d) * 0.5) * exp(-dot(diff, diff) * 60.0);
+			sum += matte.Sample(linear_clamp, tap).r * w;
+			weight_sum += w;
+		}
+	}
+	return sum / max(weight_sum, 0.0001);
+}
+
+float refined_alpha(float2 uv, float3 rgb)
+{
+	if (refinement == 1)
+		return bilateral_alpha(uv, rgb);
+	if (refinement == 2) {
+		float2 ab = coeff.Sample(linear_clamp, uv).rg;
+		float i = dot(rgb, float3(0.2126, 0.7152, 0.0722));
+		return saturate(ab.x * i + ab.y);
+	}
+	return matte.Sample(linear_clamp, uv).r;
 }
 
 float4 PSApplyMatte(VertData v_in) : TARGET
 {
-	float4 color = straight_color(v_in.uv);
-	float alpha = matte.Sample(linear_clamp, v_in.uv).r * color.a;
-	return float4(color.rgb * alpha, alpha);
+	float4 color = image.Sample(linear_clamp, v_in.uv);
+	float3 rgb = straight_rgb(color);
+	float alpha = refined_alpha(v_in.uv, rgb) * color.a;
+	return float4(rgb * alpha, alpha);
 }
 
 float4 PSMatteOnly(VertData v_in) : TARGET
 {
-	float alpha = matte.Sample(linear_clamp, v_in.uv).r;
+	float4 color = image.Sample(linear_clamp, v_in.uv);
+	float alpha = refined_alpha(v_in.uv, straight_rgb(color));
 	return float4(alpha, alpha, alpha, 1.0);
 }
 
 float4 PSCheckerboard(VertData v_in) : TARGET
 {
-	float4 color = straight_color(v_in.uv);
-	float alpha = matte.Sample(linear_clamp, v_in.uv).r * color.a;
+	float4 color = image.Sample(linear_clamp, v_in.uv);
+	float3 rgb = straight_rgb(color);
+	float alpha = refined_alpha(v_in.uv, rgb) * color.a;
 	float2 cell = floor(v_in.uv * output_size / checker_size);
 	float shade = fmod(cell.x + cell.y, 2.0) < 1.0 ? 0.35 : 0.65;
-	float3 rgb = color.rgb * alpha + float3(shade, shade, shade) * (1.0 - alpha);
-	return float4(rgb, 1.0);
+	float3 out_rgb = rgb * alpha + float3(shade, shade, shade) * (1.0 - alpha);
+	return float4(out_rgb, 1.0);
 }
 
 technique Draw

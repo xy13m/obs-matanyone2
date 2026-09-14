@@ -70,7 +70,13 @@ class renderer {
     gs_texrender_t *ring_texrender(size_t slot);
     void stage_and_submit(ma2_context_t context, uint64_t now_ns);
     void submit_full_resolution(ma2_context_t context, uint64_t now_ns);
-    void draw_texture(gs_texture_t *texture, const char *technique);
+    void draw_texture(gs_texture_t *texture, const char *technique, refinement_mode refinement,
+                      bool linear_srgb);
+    // Runs the guided filter passes at half resolution; returns the (a, b)
+    // coefficient texture or nullptr when the passes could not run.
+    gs_texture_t *guided_coefficients(gs_texture_t *frame, bool linear_srgb);
+    bool run_pass(gs_texrender_t *target, uint32_t width, uint32_t height, const char *technique,
+                  gs_texture_t *source, gs_texture_t *extra, float texel_x, float texel_y);
 
     uint32_t working_width_ = 0;
     uint32_t working_height_ = 0;
@@ -85,6 +91,12 @@ class renderer {
 
     gs_effect_t *downscale_effect_ = nullptr;
     gs_effect_t *composite_effect_ = nullptr;
+    gs_effect_t *guided_effect_ = nullptr;
+    // Guided filter intermediates (RGBA16F, half resolution), created on first use.
+    gs_texrender_t *guided_pack_ = nullptr;
+    gs_texrender_t *guided_blur_a_ = nullptr;
+    gs_texrender_t *guided_blur_b_ = nullptr;
+    gs_texrender_t *guided_coeff_ = nullptr;
     gs_texrender_t *full_ = nullptr;
     gs_texrender_t *work_ = nullptr;
     gs_texture_t *matte_ = nullptr;

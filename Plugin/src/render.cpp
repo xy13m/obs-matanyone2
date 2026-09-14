@@ -36,6 +36,7 @@ bool renderer::init(uint32_t working_width, uint32_t working_height) {
     working_height_ = working_height;
     downscale_effect_ = load_effect("effects/downscale.effect");
     composite_effect_ = load_effect("effects/matanyone2.effect");
+    guided_effect_ = load_effect("effects/guided.effect");
     // BGRA so both staging paths hand the worker the byte order it expects.
     full_ = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
     work_ = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
@@ -44,8 +45,8 @@ bool renderer::init(uint32_t working_width, uint32_t working_height) {
         slot.surface = gs_stagesurface_create(working_width, working_height, GS_BGRA);
         slot.valid = false;
     }
-    const bool ok = downscale_effect_ && composite_effect_ && full_ && work_ && matte_ &&
-                    stages_[0].surface && stages_[1].surface && stages_[2].surface;
+    const bool ok = downscale_effect_ && composite_effect_ && guided_effect_ && full_ && work_ &&
+                    matte_ && stages_[0].surface && stages_[1].surface && stages_[2].surface;
     if (!ok) {
         blog(LOG_ERROR, "[obs-matanyone2] failed to create GPU resources");
         destroy();
@@ -79,6 +80,13 @@ void renderer::destroy() {
     composite_effect_ = nullptr;
     gs_effect_destroy(downscale_effect_);
     downscale_effect_ = nullptr;
+    gs_effect_destroy(guided_effect_);
+    guided_effect_ = nullptr;
+    for (gs_texrender_t **texrender :
+         {&guided_pack_, &guided_blur_a_, &guided_blur_b_, &guided_coeff_}) {
+        gs_texrender_destroy(*texrender);
+        *texrender = nullptr;
+    }
     has_matte_ = false;
     frame_width_ = 0;
     frame_height_ = 0;
@@ -309,24 +317,118 @@ float renderer::draw(obs_source_t *filter, const render_params &params, uint64_t
     case preview_mode::off:
         break;
     }
-    draw_texture(frame, technique);
+    const bool previous_linear = gs_set_linear_srgb(true);
+    const bool linear_srgb = gs_get_linear_srgb();
+    draw_texture(frame, technique, params.refinement, linear_srgb);
+    gs_set_linear_srgb(previous_linear);
     return latency_ms;
+}
+
+// One full-screen pass of guided.effect into a half-resolution texrender.
+bool renderer::run_pass(gs_texrender_t *target, uint32_t width, uint32_t height,
+                        const char *technique, gs_texture_t *source, gs_texture_t *extra,
+                        float texel_x, float texel_y) {
+    gs_texrender_reset(target);
+    if (!gs_texrender_begin(target, width, height))
+        return false;
+    gs_ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -100.0f, 100.0f);
+    gs_effect_set_texture(gs_effect_get_param_by_name(guided_effect_, "image"), source);
+    if (extra)
+        gs_effect_set_texture(gs_effect_get_param_by_name(guided_effect_, "matte"), extra);
+    vec2 texel;
+    vec2_set(&texel, texel_x, texel_y);
+    gs_effect_set_vec2(gs_effect_get_param_by_name(guided_effect_, "texel_size"), &texel);
+    gs_effect_set_float(gs_effect_get_param_by_name(guided_effect_, "eps"), 0.001f);
+    while (gs_effect_loop(guided_effect_, technique))
+        gs_draw_sprite(source, 0, width, height);
+    gs_texrender_end(target);
+    return true;
+}
+
+gs_texture_t *renderer::guided_coefficients(gs_texture_t *frame, bool linear_srgb) {
+    for (gs_texrender_t **texrender :
+         {&guided_pack_, &guided_blur_a_, &guided_blur_b_, &guided_coeff_}) {
+        if (!*texrender)
+            *texrender = gs_texrender_create(GS_RGBA16F, GS_ZS_NONE);
+        if (!*texrender)
+            return nullptr;
+    }
+    const uint32_t width = frame_width_ / 2;
+    const uint32_t height = frame_height_ / 2;
+    const float tx = 1.0f / static_cast<float>(width);
+    const float ty = 1.0f / static_cast<float>(height);
+
+    const bool previous_framebuffer = gs_framebuffer_srgb_enabled();
+    gs_enable_framebuffer_srgb(false);
+    gs_blend_state_push();
+    gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+
+    // Pack samples the frame the same way the composite does so the guide
+    // luma matches between the passes and the final draw.
+    gs_eparam_t *image = gs_effect_get_param_by_name(guided_effect_, "image");
+    if (linear_srgb)
+        gs_effect_set_texture_srgb(image, frame);
+    else
+        gs_effect_set_texture(image, frame);
+    gs_texrender_reset(guided_pack_);
+    bool ok = gs_texrender_begin(guided_pack_, width, height);
+    if (ok) {
+        gs_ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -100.0f,
+                 100.0f);
+        gs_effect_set_texture(gs_effect_get_param_by_name(guided_effect_, "matte"), matte_);
+        while (gs_effect_loop(guided_effect_, "Pack"))
+            gs_draw_sprite(frame, 0, width, height);
+        gs_texrender_end(guided_pack_);
+    }
+    ok = ok &&
+         run_pass(guided_blur_a_, width, height, "BoxH", gs_texrender_get_texture(guided_pack_),
+                  nullptr, tx, ty) &&
+         run_pass(guided_blur_b_, width, height, "BoxV", gs_texrender_get_texture(guided_blur_a_),
+                  nullptr, tx, ty) &&
+         run_pass(guided_coeff_, width, height, "Coeff", gs_texrender_get_texture(guided_blur_b_),
+                  nullptr, tx, ty) &&
+         run_pass(guided_blur_a_, width, height, "BoxH", gs_texrender_get_texture(guided_coeff_),
+                  nullptr, tx, ty) &&
+         run_pass(guided_blur_b_, width, height, "BoxV", gs_texrender_get_texture(guided_blur_a_),
+                  nullptr, tx, ty);
+
+    gs_blend_state_pop();
+    gs_enable_framebuffer_srgb(previous_framebuffer);
+    return ok ? gs_texrender_get_texture(guided_blur_b_) : nullptr;
 }
 
 // Mirrors render_filter_tex in libobs so the output matches what
 // obs_source_process_filter_end would produce for an OBS_SOURCE_SRGB filter.
-void renderer::draw_texture(gs_texture_t *texture, const char *technique_name) {
-    const bool previous_linear = gs_set_linear_srgb(true);
-    const bool linear_srgb = gs_get_linear_srgb();
+void renderer::draw_texture(gs_texture_t *texture, const char *technique_name,
+                            refinement_mode refinement, bool linear_srgb) {
+    gs_texture_t *coefficients = nullptr;
+    if (refinement == refinement_mode::guided) {
+        coefficients = guided_coefficients(texture, linear_srgb);
+        if (!coefficients)
+            refinement = refinement_mode::none;
+    }
+
     const bool previous_framebuffer = gs_framebuffer_srgb_enabled();
     gs_enable_framebuffer_srgb(linear_srgb);
 
     gs_eparam_t *image = gs_effect_get_param_by_name(composite_effect_, "image");
-    if (linear_srgb)
+    gs_eparam_t *lowres = gs_effect_get_param_by_name(composite_effect_, "lowres");
+    gs_texture_t *lowres_texture = gs_texrender_get_texture(work_);
+    if (linear_srgb) {
         gs_effect_set_texture_srgb(image, texture);
-    else
+        gs_effect_set_texture_srgb(lowres, lowres_texture);
+    } else {
         gs_effect_set_texture(image, texture);
+        gs_effect_set_texture(lowres, lowres_texture);
+    }
     gs_effect_set_texture(gs_effect_get_param_by_name(composite_effect_, "matte"), matte_);
+    gs_effect_set_texture(gs_effect_get_param_by_name(composite_effect_, "coeff"),
+                          coefficients ? coefficients : matte_);
+    gs_effect_set_int(gs_effect_get_param_by_name(composite_effect_, "refinement"),
+                      static_cast<int>(refinement));
+    vec2 lowres_size;
+    vec2_set(&lowres_size, static_cast<float>(working_width_), static_cast<float>(working_height_));
+    gs_effect_set_vec2(gs_effect_get_param_by_name(composite_effect_, "lowres_size"), &lowres_size);
     vec2 output_size;
     vec2_set(&output_size, static_cast<float>(frame_width_), static_cast<float>(frame_height_));
     gs_effect_set_vec2(gs_effect_get_param_by_name(composite_effect_, "output_size"), &output_size);
@@ -342,7 +444,6 @@ void renderer::draw_texture(gs_texture_t *texture, const char *technique_name) {
     gs_technique_end(technique);
 
     gs_enable_framebuffer_srgb(previous_framebuffer);
-    gs_set_linear_srgb(previous_linear);
 }
 
 } // namespace ma2
