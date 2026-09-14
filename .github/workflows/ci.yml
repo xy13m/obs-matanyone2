@@ -13,7 +13,7 @@ jobs:
   test:
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Select the newest Xcode 26
         run: |
@@ -23,7 +23,7 @@ jobs:
           swift --version
 
       - name: Cache SwiftPM checkouts
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .build/checkouts
           key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
