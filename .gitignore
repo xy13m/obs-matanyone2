@@ -1,0 +1,27 @@
+# Swift Package Manager build products and dependency checkouts. The fetched
+# OBS and SIMDe headers, the upstream MatAnyone2 clone, the model export
+# workspace and the assembled plugin bundle all live under .build/ as well.
+.build/
+.swiftpm/
+
+# Local IDE and compiler output.
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.dSYM/
+*.o
+*.dylib
+
+# Core ML models are exported by scripts/export-models.sh and never committed.
+*.mlmodelc/
+*.mlpackage/
+Plugin/data/models/*
+!Plugin/data/models/README.md
+
+# Python environment created by uv for the model exporter.
+.venv/
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
