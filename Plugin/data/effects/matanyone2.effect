@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Multiplies the source by a single-channel matte. The matte texture is
-// smaller than the frame and is sampled with linear filtering.
+// Composites the source with the working-resolution matte. The matte texture
+// is sampled with linear filtering; the edge refinement effects replace the
+// plain sample with a guided upsampling.
 
 uniform float4x4 ViewProj;
 uniform texture2d image;
 uniform texture2d matte;
+uniform float2 output_size;   // full-resolution size in pixels
+uniform float checker_size;   // checkerboard square size in pixels
 
 sampler_state linear_clamp {
 	Filter = Linear;
@@ -26,14 +29,36 @@ VertData VSDefault(VertData v_in)
 	return vert_out;
 }
 
+float4 straight_color(float2 uv)
+{
+	float4 color = image.Sample(linear_clamp, uv);
+	// OBS hands the filter premultiplied color; un-premultiply so edges keep
+	// their true color before the matte is applied.
+	color.rgb = max(float3(0.0, 0.0, 0.0), color.rgb / max(color.a, 0.00001));
+	return color;
+}
+
 float4 PSApplyMatte(VertData v_in) : TARGET
 {
-	float4 color = image.Sample(linear_clamp, v_in.uv);
-	// OBS hands the filter premultiplied color; un-premultiply before
-	// applying the matte so edges keep their true color.
-	color.rgb = max(float3(0.0, 0.0, 0.0), color.rgb / max(color.a, 0.00001));
+	float4 color = straight_color(v_in.uv);
 	float alpha = matte.Sample(linear_clamp, v_in.uv).r * color.a;
 	return float4(color.rgb * alpha, alpha);
+}
+
+float4 PSMatteOnly(VertData v_in) : TARGET
+{
+	float alpha = matte.Sample(linear_clamp, v_in.uv).r;
+	return float4(alpha, alpha, alpha, 1.0);
+}
+
+float4 PSCheckerboard(VertData v_in) : TARGET
+{
+	float4 color = straight_color(v_in.uv);
+	float alpha = matte.Sample(linear_clamp, v_in.uv).r * color.a;
+	float2 cell = floor(v_in.uv * output_size / checker_size);
+	float shade = fmod(cell.x + cell.y, 2.0) < 1.0 ? 0.35 : 0.65;
+	float3 rgb = color.rgb * alpha + float3(shade, shade, shade) * (1.0 - alpha);
+	return float4(rgb, 1.0);
 }
 
 technique Draw
@@ -42,5 +67,23 @@ technique Draw
 	{
 		vertex_shader = VSDefault(v_in);
 		pixel_shader = PSApplyMatte(v_in);
+	}
+}
+
+technique DrawAlpha
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSMatteOnly(v_in);
+	}
+}
+
+technique DrawChecker
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSCheckerboard(v_in);
 	}
 }

@@ -424,6 +424,9 @@ public final class MattingWorker: @unchecked Sendable {
     // MARK: Frames
 
     private func process(_ frame: FrameBuffer, options: WorkerOptions) {
+        if lastFrame == nil {
+            log("first frame received: \(frame.width)x\(frame.height)")
+        }
         let working: FrameBuffer
         if frame.width == workingWidth && frame.height == workingHeight {
             working = frame

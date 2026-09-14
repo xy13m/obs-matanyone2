@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Area-averaging downscale from the full-resolution frame to the working
+// resolution. Each output pixel averages a 4x4 grid of bilinear taps spread
+// over the source area it covers (1920/512 = 3.75 source texels per output
+// pixel), which is a close approximation of a box filter at that ratio.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 texel_size;   // 1 / source size in UV
+uniform float2 scale;        // source pixels per output pixel (x, y)
+
+sampler_state linear_clamp {
+	Filter = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv = v_in.uv;
+	return vert_out;
+}
+
+float4 PSDownscale(VertData v_in) : TARGET
+{
+	// Tap spacing covers the whole source footprint of this output pixel.
+	float2 step = texel_size * scale * 0.25;
+	float2 origin = v_in.uv - step * 1.5;
+	float4 sum = float4(0.0, 0.0, 0.0, 0.0);
+	for (int y = 0; y < 4; y++) {
+		for (int x = 0; x < 4; x++) {
+			sum += image.Sample(linear_clamp, origin + step * float2(x, y));
+		}
+	}
+	return sum * 0.0625;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSDownscale(v_in);
+	}
+}

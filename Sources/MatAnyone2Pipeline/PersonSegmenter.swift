@@ -20,7 +20,7 @@ public final class VisionPersonSegmenter: PersonSegmenter {
 
     public func personMask(in frame: FrameBuffer) -> Mask? {
         guard let pixelBuffer = Self.makePixelBuffer(frame) else { return nil }
-        nonisolated(unsafe) let request = GeneratePersonSegmentationRequest()
+        let request = GeneratePersonSegmentationRequest()
         request.qualityLevel = .accurate
         request.outputPixelFormatType = kCVPixelFormatType_OneComponent8
 
