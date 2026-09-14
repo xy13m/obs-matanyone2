@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Multiplies the source by a single-channel matte. The matte texture is
+// smaller than the frame and is sampled with linear filtering.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform texture2d matte;
+
+sampler_state linear_clamp {
+	Filter = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv = v_in.uv;
+	return vert_out;
+}
+
+float4 PSApplyMatte(VertData v_in) : TARGET
+{
+	float4 color = image.Sample(linear_clamp, v_in.uv);
+	// OBS hands the filter premultiplied color; un-premultiply before
+	// applying the matte so edges keep their true color.
+	color.rgb = max(float3(0.0, 0.0, 0.0), color.rgb / max(color.a, 0.00001));
+	float alpha = matte.Sample(linear_clamp, v_in.uv).r * color.a;
+	return float4(color.rgb * alpha, alpha);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSApplyMatte(v_in);
+	}
+}
