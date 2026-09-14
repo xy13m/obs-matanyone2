@@ -28,25 +28,23 @@ let package = Package(
         // Catches NSException raised inside Core ML so a failed prediction does
         // not take OBS down.
         .target(name: "ObjCExceptionCatcher", publicHeadersPath: "include"),
-        // C ABI over MatAnyone2Kit, built as a dylib and linked by the C++ module.
-        // The C header lives in Sources/MatAnyone2Bridge/include and is added to
-        // the clang++ include path by scripts/build-plugin.sh.
+        // Worker thread, Core ML engine, Vision seeding, calibration and
+        // persistence. Shared by the plugin bridge and the benchmark.
         .target(
-            name: "MatAnyone2Bridge",
+            name: "MatAnyone2Pipeline",
             dependencies: [
                 .product(name: "MatAnyoneKitCoreML", package: "MatAnyone2Kit"),
                 "MatAnyone2Core",
                 "ObjCExceptionCatcher",
             ]
         ),
-        .executableTarget(
-            name: "MatAnyone2Benchmark",
-            dependencies: [
-                .product(name: "MatAnyoneKitCoreML", package: "MatAnyone2Kit"),
-                "MatAnyone2Core",
-            ]
-        ),
+        // C ABI over the pipeline, built as a dylib and linked by the C++ module.
+        // The C header lives in Sources/MatAnyone2Bridge/include and is added to
+        // the clang++ include path by scripts/build-plugin.sh.
+        .target(name: "MatAnyone2Bridge", dependencies: ["MatAnyone2Pipeline"]),
+        .executableTarget(name: "MatAnyone2Benchmark", dependencies: ["MatAnyone2Pipeline"]),
         .testTarget(name: "MatAnyone2CoreTests", dependencies: ["MatAnyone2Core"]),
+        .testTarget(name: "MatAnyone2PipelineTests", dependencies: ["MatAnyone2Pipeline"]),
     ],
     swiftLanguageModes: [.v6]
 )
