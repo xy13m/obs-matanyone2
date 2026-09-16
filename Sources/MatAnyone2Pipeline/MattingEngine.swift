@@ -51,7 +51,7 @@ public final class CoreMLMattingEngine: MattingEngine {
     }
 
     public func seed(image: [Float], mask: [Float]) throws {
-        try guarded("seed") {
+        try guarded("seed") { [self] in
             _ = try engine.seed(
                 image: .init(data: image, shape: [1, 3, workingHeight, workingWidth]),
                 seedMask: mask, warmup: 10)
@@ -60,25 +60,34 @@ public final class CoreMLMattingEngine: MattingEngine {
 
     public func step(image: [Float]) throws -> [Float] {
         var alpha: [Float] = []
-        try guarded("step") {
+        try guarded("step") { [self] in
             alpha = try engine.step(
                 image: .init(data: image, shape: [1, 3, workingHeight, workingWidth]))
         }
         return alpha
     }
 
-    /// Runs `body` under an Objective-C exception handler; Core ML raises
-    /// NSException on some failures and Swift cannot catch those.
-    private func guarded(_ what: String, _ body: () throws -> Void) throws {
-        var thrown: Error?
-        let survived = withoutActuallyEscaping(body) { body in
-            ma2_try_objc {
-                do { try body() } catch { thrown = error }
-            }
-        }
-        if !survived { throw EngineError.objcException(what) }
-        if let thrown { throw EngineError.prediction(thrown.localizedDescription) }
+    private func guarded(_ what: String, _ body: @escaping () throws -> Void) throws {
+        try withObjCExceptionGuard(what, body)
     }
+}
+
+/// Runs `body` under an Objective-C exception handler; Core ML raises
+/// NSException on some failures and Swift cannot catch those.
+///
+/// `body` is escaping on purpose. An NSException unwinds through the Swift
+/// frames without running their cleanups, so the block's reference to `body`
+/// is never released on that path. A non-escaping closure would trip the
+/// runtime's escape check right after the exception was caught, turning a
+/// recoverable prediction failure into a crash; an escaping one just leaks
+/// the closure context that one time.
+func withObjCExceptionGuard(_ what: String, _ body: @escaping () throws -> Void) throws {
+    var thrown: Error?
+    let survived = ma2_try_objc {
+        do { try body() } catch { thrown = error }
+    }
+    if !survived { throw EngineError.objcException(what) }
+    if let thrown { throw EngineError.prediction(thrown.localizedDescription) }
 }
 
 /// BGRA at working resolution to the engine's RGB planar Float tensor, and a
