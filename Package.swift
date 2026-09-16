@@ -19,7 +19,7 @@ let package = Package(
         // whenever the fork gains a commit the plugin needs.
         .package(
             url: "https://github.com/xy13m/MatAnyone2Kit",
-            revision: "accb1bd4b6bbd768923a6a58482be9fb47446a68"
+            revision: "56b528175b238241149f50ef2bb72db0261069ca"
         )
     ],
     targets: [

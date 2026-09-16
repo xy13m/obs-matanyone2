@@ -53,11 +53,14 @@ public final class MattingWorker: @unchecked Sendable {
     private var countdownDeadlineNs: UInt64 = 0
     private var accumulator: PlateAccumulator?
     private var calibration = CalibrationData()
+    private var autoSeedGate = AutoSeedGate()
     private var lastFrame: FrameBuffer?
     private var workingFrame: FrameBuffer
     private var preprocessor: FramePreprocessor
     private var postprocessor: Postprocessor
     private var imageTensor: [Float]
+    /// Scratch copy of the props plate, converted for the engine at seed time.
+    private let plateFrame: FrameBuffer
     private var matteBuffers: [[UInt8]]
     private var matteIndex = 0
     private var lastRawAlpha: [Float]?
@@ -97,6 +100,7 @@ public final class MattingWorker: @unchecked Sendable {
         postprocessor = Postprocessor(width: workingWidth, height: workingHeight)
         postprocessor.options = options.postprocess
         imageTensor = [Float](repeating: 0, count: 3 * workingWidth * workingHeight)
+        plateFrame = FrameBuffer(width: workingWidth, height: workingHeight)
         matteBuffers = (0..<3).map { _ in [UInt8](repeating: 0, count: workingWidth * workingHeight)
         }
         var initial = StatusSnapshot(phase: .loadingModels)
@@ -385,14 +389,20 @@ public final class MattingWorker: @unchecked Sendable {
         do {
             switch policy {
             case .initial:
-                mask = try SeedComposer.initialSeed(person: person, props: propsMask)
+                mask = try SeedComposer.initialSeed(
+                    person: person,
+                    props: propsForSeed(
+                        person: person, frame: frame, calibrated: propsMask, options: options))
             case .refresh:
                 if let raw = lastRawAlpha {
                     mask = try SeedComposer.refreshSeed(
                         person: person, trackedAlpha: raw,
                         minSpeckArea: SpeckFilter.minimumArea(pixelCount: raw.count))
                 } else {
-                    mask = try SeedComposer.initialSeed(person: person, props: propsMask)
+                    mask = try SeedComposer.initialSeed(
+                        person: person,
+                        props: propsForSeed(
+                            person: person, frame: frame, calibrated: propsMask, options: options))
                 }
             }
         } catch SeedComposer.Failure.noPerson(let coverage) {
@@ -408,10 +418,9 @@ public final class MattingWorker: @unchecked Sendable {
         }
 
         let start = clock.nowNs()
-        preprocessor.rgbPlanar(from: frame, into: &imageTensor)
+        let how: String
         do {
-            engine.reset()
-            try engine.seed(image: imageTensor, mask: mask.seedFloats)
+            how = try plant(engine: engine, frame: frame, mask: mask)
         } catch {
             fail("Seed failed: \(error)", resume: resume)
             return
@@ -422,11 +431,32 @@ public final class MattingWorker: @unchecked Sendable {
         resetStats()
         log(
             String(
-                format: "seeded (%@) in %llu ms: person %.1f%%, props %.1f%%, union %.1f%%",
-                policy == .initial ? "person + calibrated props" : "person + tracked props",
-                (lastSeedNs - start) / 1_000_000, person.coverage * 100,
-                propsMask.coverage * 100, mask.coverage * 100))
+                format: "seeded (%@, %@) in %llu ms: person %.1f%%, current mask %.1f%%",
+                policy == .initial ? "person + calibrated props" : "person + tracked props", how,
+                (lastSeedNs - start) / 1_000_000, person.coverage * 100, mask.coverage * 100))
         transition(to: .tracking)
+    }
+
+    /// Hands the tracker its memory. With a props plate on file the plate
+    /// with the props mask becomes the permanent seed frame, so the tracker
+    /// knows what the props look like without the person in front of them,
+    /// and `frame` with `mask` is added as a second memory frame. Without a
+    /// plate, `frame` with `mask` is the seed. Returns a label for the log.
+    private func plant(engine: any MattingEngine, frame: FrameBuffer, mask: Mask) throws -> String {
+        engine.reset()
+        if let plate = calibration.propsPlate, let props = calibration.propsMask,
+            plate.width == frame.width, plate.height == frame.height
+        {
+            plateFrame.bgra = plate.bgra
+            preprocessor.rgbPlanar(from: plateFrame, into: &imageTensor)
+            try engine.seed(image: imageTensor, mask: props.seedFloats)
+            preprocessor.rgbPlanar(from: frame, into: &imageTensor)
+            try engine.addMemoryFrame(image: imageTensor, mask: mask.seedFloats)
+            return "props plate + current frame"
+        }
+        preprocessor.rgbPlanar(from: frame, into: &imageTensor)
+        try engine.seed(image: imageTensor, mask: mask.seedFloats)
+        return "current frame only"
     }
 
     private func clearCalibration() {
@@ -663,14 +693,21 @@ public final class MattingWorker: @unchecked Sendable {
         guard let engine, let frame = lastFrame, let props = calibration.propsMask else { return }
         guard let soft = segmenter.personMask(in: frame) else { return }
         let person = SeedComposer.personMask(fromSoft: soft)
-        guard let mask = try? SeedComposer.initialSeed(person: person, props: props) else {
+        guard autoSeedGate.admit(person) else {
+            if options.verboseLogging {
+                log(String(format: "auto-seed: waiting, person %.1f%%", person.coverage * 100))
+            }
+            return
+        }
+        let seedProps = propsForSeed(
+            person: person, frame: frame, calibrated: props, options: options)
+        guard let mask = try? SeedComposer.initialSeed(person: person, props: seedProps) else {
             if options.verboseLogging { log("auto-seed: no person yet") }
             return
         }
-        preprocessor.rgbPlanar(from: frame, into: &imageTensor)
+        let how: String
         do {
-            engine.reset()
-            try engine.seed(image: imageTensor, mask: mask.seedFloats)
+            how = try plant(engine: engine, frame: frame, mask: mask)
         } catch {
             fail("Seed failed: \(error)", resume: .waitingForPerson)
             return
@@ -681,9 +718,39 @@ public final class MattingWorker: @unchecked Sendable {
         resetStats()
         log(
             String(
-                format: "auto-seeded: person %.1f%%, union %.1f%%", person.coverage * 100,
-                mask.coverage * 100))
+                format: "auto-seeded (%@): person %.1f%%, current mask %.1f%%", how,
+                person.coverage * 100, mask.coverage * 100))
         transition(to: .tracking)
+    }
+
+    /// The calibrated props re-located in the current frame (see
+    /// `SeedComposer.liveProps`). Falls back to the calibrated mask when no
+    /// clean plate exists or nothing in the frame overlaps it.
+    private func propsForSeed(
+        person: Mask, frame: FrameBuffer, calibrated: Mask, options: WorkerOptions
+    ) -> Mask {
+        guard let clean = calibration.cleanPlate, clean.width == frame.width,
+            clean.height == frame.height
+        else { return calibrated }
+        let current = Plate(width: frame.width, height: frame.height, bgra: frame.bgra)
+        let live = SeedComposer.liveProps(
+            current: current, clean: clean, calibrated: calibrated, person: person,
+            threshold: UInt8(clamping: options.propsThreshold), minRegion: options.propsMinRegion)
+        if live.foregroundCount == 0 {
+            if calibration.propsPlate != nil {
+                log(
+                    "props now: none found in the current frame; the props plate frame carries them"
+                )
+                return Mask(width: calibrated.width, height: calibrated.height)
+            }
+            log("props now: nothing overlaps the calibrated mask, seeding with it as is")
+            return calibrated
+        }
+        log(
+            String(
+                format: "props now: %.1f%% of the frame (calibrated mask %.1f%%)",
+                live.coverage * 100, calibrated.coverage * 100))
+        return live
     }
 
     // MARK: Status
@@ -692,6 +759,7 @@ public final class MattingWorker: @unchecked Sendable {
         guard newPhase != phase || newPhase == .error else { return }
         log("phase \(phase) -> \(newPhase)")
         phase = newPhase
+        if newPhase == .waitingForPerson { autoSeedGate.reset() }
         condition.lock()
         countDrops = newPhase == .tracking
         if newPhase != .error {

@@ -13,15 +13,20 @@ private final class FakeEngine: MattingEngine, @unchecked Sendable {
     private let lock = NSLock()
     private var _resets = 0
     private var _seeds: [[Float]] = []
+    private var _memoryFrames: [[Float]] = []
     private var _steps = 0
     var alphaToReturn = [Float](repeating: 0, count: 512)
 
     var resets: Int { lock.withLock { _resets } }
     var seeds: [[Float]] { lock.withLock { _seeds } }
+    var memoryFrames: [[Float]] { lock.withLock { _memoryFrames } }
     var steps: Int { lock.withLock { _steps } }
 
     func reset() { lock.withLock { _resets += 1 } }
     func seed(image: [Float], mask: [Float]) throws { lock.withLock { _seeds.append(mask) } }
+    func addMemoryFrame(image: [Float], mask: [Float]) throws {
+        lock.withLock { _memoryFrames.append(mask) }
+    }
     func step(image: [Float]) throws -> [Float] {
         lock.withLock { _steps += 1 }
         return alphaToReturn
@@ -60,8 +65,16 @@ private struct Harness {
         var all: [String] { lock.withLock { lines } }
     }
 
+    /// Test frames are 32x16, so the props region floor is lowered from the
+    /// production default.
+    static var defaultOptions: WorkerOptions {
+        var options = WorkerOptions()
+        options.propsMinRegion = 8
+        return options
+    }
+
     init(
-        options: WorkerOptions = WorkerOptions(),
+        options: WorkerOptions = Harness.defaultOptions,
         prepareStore: ((CalibrationStore) throws -> Void)? = nil
     )
         throws
@@ -208,12 +221,14 @@ private struct Harness {
         h.worker.request(.seed)
         #expect(h.waitForPhase(.tracking))
         #expect(h.engine.resets == 1)
-        let seed = try #require(h.engine.seeds.last)
+        let props = try #require(h.store.load(workingWidth: 32, workingHeight: 16)?.propsMask)
+        // The props plate with the props mask is the permanent seed frame;
+        // the current frame with person plus props is the second memory frame.
+        #expect(h.engine.seeds.last == props.seedFloats)
         let expected = try SeedComposer.initialSeed(
-            person: SeedComposer.personMask(fromSoft: Harness.person),
-            props: try #require(h.store.load(workingWidth: 32, workingHeight: 16)?.propsMask))
-        #expect(seed == expected.seedFloats)
-        #expect(h.logs.all.contains { $0.contains("seeded (person + calibrated props)") })
+            person: SeedComposer.personMask(fromSoft: Harness.person), props: props)
+        #expect(h.engine.memoryFrames.last == expected.seedFloats)
+        #expect(h.logs.all.contains { $0.contains("seeded (person + calibrated props") })
     }
 
     @Test func seedWithoutPersonReportsErrorAndRecovers() throws {
@@ -270,7 +285,8 @@ private struct Harness {
         h.clock.advance(seconds: 11)
         h.submit(id: 201)
         #expect(h.wait { h.engine.seeds.count == 2 })
-        let second = try #require(h.engine.seeds.last)
+        #expect(h.engine.memoryFrames.count == 2)
+        let second = try #require(h.engine.memoryFrames.last)
         #expect(second[26] == 1)
         #expect(second[20] == 0)
         #expect(h.logs.all.contains { $0.contains("person + tracked props") })
@@ -291,10 +307,62 @@ private struct Harness {
         Thread.sleep(forTimeInterval: 0.1)
         #expect(h.worker.status().phase == .waitingForPerson)
         h.segmenter.mask = Harness.person
+        // One observation is not enough: the gate wants two that agree.
         h.clock.advance(seconds: 1.5)
         h.submit(id: 2)
+        Thread.sleep(forTimeInterval: 0.1)
+        #expect(h.worker.status().phase == .waitingForPerson)
+        h.clock.advance(seconds: 1.5)
+        h.submit(id: 3)
         #expect(h.waitForPhase(.tracking))
         #expect(h.engine.seeds.count == 1)
+    }
+
+    @Test func autoSeedWaitsForAStablePerson() throws {
+        let h = try Harness(prepareStore: { store in
+            var data = CalibrationData(propsRegions: 1)
+            data.cleanPlate = Plate(width: 32, height: 16, fill: (b: 1, g: 1, r: 1))
+            data.propsMask = Mask(width: 32, height: 16).fillingRect(
+                x: 24, y: 0, width: 8, height: 16, value: 255)
+            try store.save(data, workingWidth: 32, workingHeight: 16)
+        })
+        defer { h.stop() }
+        #expect(h.waitForPhase(.waitingForPerson))
+        // The person walks in: a growing mask every second.
+        for width in [2, 5, 8] {
+            h.segmenter.mask = Mask(width: 32, height: 16).fillingRect(
+                x: 0, y: 0, width: width, height: 16, value: 255)
+            h.clock.advance(seconds: 1.5)
+            h.submit(id: UInt64(width))
+            Thread.sleep(forTimeInterval: 0.1)
+            #expect(h.worker.status().phase == .waitingForPerson)
+        }
+        // Then sits still.
+        h.segmenter.mask = Harness.person
+        for id in [20, 21] as [UInt64] {
+            h.clock.advance(seconds: 1.5)
+            h.submit(id: id)
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        #expect(h.waitForPhase(.tracking))
+        #expect(h.engine.seeds.count == 1)
+    }
+
+    @Test func seedPicksUpPropsWhereTheyAreNow() throws {
+        let h = try Harness()
+        defer { h.stop() }
+        #expect(h.waitForPhase(.uncalibrated))
+        #expect(h.calibrate())  // props plate: rectangle at x 20-27
+        h.segmenter.mask = Harness.person
+        // The prop moved two pixels to the right before the seed.
+        h.submit(id: 300, rect: (x: 22, y: 4, w: 8, h: 8))
+        Thread.sleep(forTimeInterval: 0.1)
+        h.worker.request(.seed)
+        #expect(h.waitForPhase(.tracking))
+        let current = try #require(h.engine.memoryFrames.last)
+        #expect(current[8 * 32 + 30] == 1)  // new position, outside the calibrated mask
+        #expect(current[8 * 32 + 19] == 0)  // old position is background now
+        #expect(h.logs.all.contains { $0.contains("props now") })
     }
 
     @Test func framesBeforeTrackingAreNotCountedAsDropped() throws {

@@ -14,6 +14,8 @@ public protocol MattingEngine: AnyObject {
     /// Clears the memory without reloading models.
     func reset()
     func seed(image: [Float], mask: [Float]) throws
+    /// Adds a second frame with a known mask to the memory after `seed`.
+    func addMemoryFrame(image: [Float], mask: [Float]) throws
     func step(image: [Float]) throws -> [Float]
 }
 
@@ -55,6 +57,13 @@ public final class CoreMLMattingEngine: MattingEngine {
             _ = try engine.seed(
                 image: .init(data: image, shape: [1, 3, workingHeight, workingWidth]),
                 seedMask: mask, warmup: 10)
+        }
+    }
+
+    public func addMemoryFrame(image: [Float], mask: [Float]) throws {
+        try guarded("memory frame") { [self] in
+            try engine.addMemoryFrame(
+                image: .init(data: image, shape: [1, 3, workingHeight, workingWidth]), mask: mask)
         }
     }
 
