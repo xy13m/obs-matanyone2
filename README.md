@@ -154,7 +154,7 @@ without the panel or triggered through obs-websocket.
 
 | Setting | Default | What it does |
 |---|---|---|
-| Edge refinement | None | How the 512x288 matte is upscaled to the frame. Joint bilateral upsampling and the guided filter use the full-resolution image to sharpen edges on the GPU. See the measurements below. |
+| Edge refinement | Joint bilateral upsampling | How the 512x288 matte is upscaled to the frame. Joint bilateral upsampling and the guided filter use the full-resolution image to sharpen edges on the GPU. See the measurements below. |
 | Edge feather / erode | 0 px | Negative values shrink the matte by that many working-resolution pixels; positive values soften the edge by that radius. |
 | Temporal alpha smoothing | 0 | Weight of the previous matte blended into the new one. Reduces flicker, adds lag to fast motion. |
 | Frame/matte alignment | Lowest latency | Lowest latency composites the newest frame with the newest matte. Aligned keeps recent frames on the GPU and composites each frame with its own matte; the output then follows the matte rate and the added latency is shown in the status line. |
@@ -190,19 +190,26 @@ steps after the seed):
 | 768x432 | 541 ms | 33.2 ms | below the 30 fps target; export it with `MA2_WORKING_WIDTH=768 MA2_WORKING_HEIGHT=432` if you want to try it |
 
 The step time is the engine alone. In the plugin, preprocessing, the speck
-filter, quantisation and queueing add about 1 ms at 512x288. The reference
-implementation measured 48 matte fps end to end on this machine with the same
-512x288 models; the camera benchmark for this plugin (`scripts/run-benchmark.sh`,
-see below) was run with the capture card connected but the camera off, so it
-confirmed the capture path and the tool itself but not a live matte rate.
-Run it with the camera on to fill in that number.
+filter, quantisation and queueing add about 1 ms at 512x288. With the camera
+on (1080p60 into OBS, person plus chair and microphone seeded) the filter
+ran at 55 to 57 matte fps with inference p50 16.6 ms and p95 21 ms, and OBS
+reported 7 to 8 ms average render time per frame at 1080p60. The camera
+benchmark (`scripts/run-benchmark.sh`, see below) saw 30 fps input from the
+capture card and matched it: 29.6 matte fps, inference p50 22.9 ms, footprint
+flat at 380 MB over 60 s.
 
-Edge refinement (bilateral, guided) and the aligned mode are implemented and
-load in OBS, but their GPU cost and visual benefit have not been measured
-yet: measuring needs a person in frame. The default stays **None** until that
-measurement is done. To measure: open OBS's Stats dock, note the average
-render time with each option, and compare frame grabs of hair and the boom
-arm with **Matte preview** set to *Alpha only*.
+Edge refinement was measured in OBS with obs-websocket's `GetStats` over 20 s
+per mode (render time is the whole OBS frame, so the passes themselves are
+within the noise):
+
+| Edge refinement | Average render time | Skipped frames / 20 s | Edges |
+|---|---|---|---|
+| None | 7.8 to 8.3 ms | 0 to 1 | steps of the 512x288 grid visible on diagonal edges |
+| Joint bilateral upsampling | 6.6 ms | 1 | cleanest; follows the microphone arm and cable |
+| Guided filter | 7.8 ms | 1 | grey halos with the original radius 8 / eps 0.001; retuned to radius 4, eps 0.01 and limited to the band where the matte is uncertain, which removed the halos in an offline replay of the same frame |
+
+Bilateral is therefore the default. The aligned mode adds about 69 ms
+(four frames at 60 fps) with no change in render time or skipped frames.
 
 ## Benchmark
 
@@ -268,8 +275,8 @@ each item in this table.
 | Change the lighting after calibration | No holes, no background leak | not run yet |
 | Restart OBS with calibration on disk | Auto-seeds when the person is in frame | verified: phase goes to "Waiting for a person" and seeds on detection |
 | Switch compute units while tracking | Models reload, calibration kept | verified without a person: reload and return to "Waiting for a person" |
-| Edge refinement none / bilateral / guided | Compare edges and render time | not run yet |
-| Aligned mode | Status shows added latency; no halo on fast motion | not run yet |
+| Edge refinement none / bilateral / guided | Compare edges and render time | measured (see Performance): bilateral cleanest, default; guided retuned |
+| Aligned mode | Status shows added latency; no halo on fast motion | status shows +69 ms, render time unchanged; fast-motion halo check not run yet |
 
 What was verified end to end without a person: the calibration flow
 (countdown, plate averaging, props mask extraction, persistence), seeding

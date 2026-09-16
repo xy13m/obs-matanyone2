@@ -62,6 +62,10 @@ the OBS-free logic library and the benchmark.
 - The five calibration actions are hotkeys on the parent source
   (`matanyone2.capture_clean_plate` and so on); obs-websocket's
   `TriggerHotkeyByName` reaches them, which `scripts/obsctl.py` uses.
+- Edge refinement defaults to joint bilateral upsampling (measured cleanest,
+  no measurable render cost). The guided filter runs at radius 4 / eps 0.01
+  and only inside the band where the matte is uncertain; radius 8 / eps 0.001
+  produced grey halos.
 - Log lines are prefixed `[obs-matanyone2]`; every phase change logs, and a
   timing line follows every 120 predictions.
 
