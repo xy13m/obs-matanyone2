@@ -65,7 +65,7 @@ source below the camera in the scene for the new background.
 Calibration teaches the filter what the room looks like without you and
 which objects should stay. It takes three button presses and about a
 minute. Everything is stored on disk, so after an OBS restart the filter
-seeds itself as soon as it sees you.
+seeds itself once it has seen you steady for about two seconds.
 
 1. **Capture clean plate.** Press the button, then get out of the frame and
    take the chair, the microphone and the boom arm with you. After the
@@ -76,28 +76,42 @@ seeds itself as soon as it sees you.
    morphology and a minimum region size, becomes the props mask. The status
    line reports how many separate regions were found; expect one per prop
    (a chair and a microphone on a boom arm usually give two or three).
-3. **Seed tracker now.** Sit down and press the button. The person mask from
-   Apple's Vision framework is combined with the props mask and handed to
-   MatAnyone 2 as the initial target. From this point on the model tracks
-   the union of you and the props.
+3. **Seed tracker now.** Sit down and press the button. The tracker gets
+   two memory frames. The props plate with the props mask goes in first and
+   stays as the permanent memory, so the model knows what the chair looks
+   like without you in front of it; a chair back that only shows when you
+   lean is recognised from that frame. Then the current frame goes in with
+   the person mask from Apple's Vision framework plus the props as they are
+   visible now: the frame is compared with the clean plate the same way the
+   props plate was, you are cut out, and only regions that overlap the
+   calibrated props mask are kept, so a chair that rolled a little is
+   picked up where it stands while new objects and shadows are ignored.
+   From this point on the model tracks the union of you and the props.
 
 Capture again after moving the camera, changing the lens or the framing, or
 rearranging the room. A lighting change after calibration does not need a
 recapture: the plates are only used to derive the props mask, never compared
 against live frames.
 
-If the chair is not in its props-plate position when you seed, the seed
-covers a strip of background next to it and that strip stays visible. Put
-the props back before seeding, or use **Re-seed now** after moving them.
+If nothing in the current frame overlaps the calibrated props (the prop
+moved far, or the lighting differs so much from the plates that the whole
+frame counts as changed), the current frame contributes the person alone
+and the props plate frame still carries the props; the log says so.
+
+The automatic seed after start-up waits until Vision has reported the same
+person (at least 5 % of the frame, 85 % overlap between two observations
+one second apart) before seeding. Seeding while you are still walking in
+would teach the tracker a partial person, and the missing part stays a
+hole afterwards.
 
 ### Re-seeding
 
 The tracker's memory drifts over long sessions, and props sometimes move.
 Two mechanisms refresh it without reloading the models:
 
-- **Re-seed now** clears the memory and seeds again with the person from
-  Vision plus the props where the tracker currently sees them. Use it when
-  the boom arm or the chair moved, or when the matte has drifted.
+- **Re-seed now** clears the memory and seeds again: the props plate first,
+  then the current frame with the person from Vision plus the props where
+  the tracker currently sees them. Use it when the matte has drifted.
 - **Periodic re-seed interval** does the same automatically every N seconds
   (0 turns it off). It repairs drift in the person (a lost hand or hair
   after fast motion) while keeping the props wherever they are now.
@@ -147,7 +161,7 @@ without the panel or triggered through obs-websocket.
 | Countdown | 3 s | Delay between pressing a capture button and the capture. |
 | Plate averaging frames | 16 | Frames averaged per plate to reduce sensor noise. |
 | Props difference threshold | 16 | Per-pixel difference (0 to 255) that counts as a prop. Raise it when background noise appears in the mask, lower it when parts of a prop are missing. |
-| Minimum props region size | 64 px | Regions smaller than this many working-resolution pixels are discarded. |
+| Minimum props region size | 200 px | Regions smaller than this many working-resolution pixels are discarded. 64 let a bag handle and a reflection through on a 512x288 plate. |
 | Periodic re-seed interval | 0 s | Automatic re-seed every N seconds; 0 is off. |
 
 ### Output quality
@@ -157,7 +171,7 @@ without the panel or triggered through obs-websocket.
 | Edge refinement | Joint bilateral upsampling | How the 512x288 matte is upscaled to the frame. Joint bilateral upsampling and the guided filter use the full-resolution image to sharpen edges on the GPU. See the measurements below. |
 | Edge feather / erode | 0 px | Negative values shrink the matte by that many working-resolution pixels; positive values soften the edge by that radius. |
 | Temporal alpha smoothing | 0 | Weight of the previous matte blended into the new one. Reduces flicker, adds lag to fast motion. |
-| Frame/matte alignment | Lowest latency | Lowest latency composites the newest frame with the newest matte. Aligned keeps recent frames on the GPU and composites each frame with its own matte; the output then follows the matte rate and the added latency is shown in the status line. |
+| Frame/matte alignment | Aligned | Aligned keeps recent frames on the GPU and composites each frame with its own matte; the output then follows the matte rate and the added latency (measured at 51 to 69 ms) is shown in the status line. Lowest latency composites the newest frame with the newest matte, which leaks background around fast-moving hands and heads. |
 
 ### Performance
 
@@ -245,8 +259,13 @@ camera is in PAL/50p.
 - **A prop disappears after a while.** Press Re-seed now (props stay where
   they are) or Seed tracker now (props back in calibrated positions). Enable
   the periodic re-seed if it keeps happening.
-- **Background leaks in next to the chair.** The chair was not in its
-  calibrated position at seed time. Put it back and press Seed tracker now.
+- **The chair back vanishes when you lean.** Before two-frame seeding the
+  tracker had never seen the chair without you in front of it. Make sure
+  the props plate was captured with the chair in place and press Seed
+  tracker now; the log line should say "props plate + current frame".
+- **The matte has a hole where your head is after start-up.** The automatic
+  seed fired while you were still moving into the frame. Press Seed tracker
+  now while seated. Versions before the seed gate did this on every start.
 - **The filter passes the video through unchanged.** It does that whenever
   it is not tracking: look at the status line. "Loading MatAnyone 2 models"
   takes a few seconds after OBS starts; the first load after an export takes
@@ -265,18 +284,18 @@ each item in this table.
 
 | Scenario | Expected | Result |
 |---|---|---|
-| Lean left and right, forward and back | Person and chair stay complete | not run yet (camera had no signal during development) |
-| Turn the head and the torso | No holes in hair or shoulders | not run yet |
-| Stand up and sit down | Person tracked while standing; chair stays | not run yet |
-| Rotate the chair | Chair stays visible through the rotation | not run yet |
-| Move the boom arm across the frame | Microphone and arm stay visible | not run yet |
-| Prop leaves the frame and returns to the same place | Picked up again without re-seed | not run yet |
-| Prop returns to a different place | Needs Re-seed now; recovered after it | not run yet |
-| Change the lighting after calibration | No holes, no background leak | not run yet |
+| Lean left and right, forward and back | Person and chair stay complete | person complete; chair was missing before seed-time prop relocation, retest pending |
+| Turn the head and the torso | No holes in hair or shoulders | passed; a light rim on the leading edge in lowest-latency mode |
+| Stand up and sit down | Person tracked while standing; chair stays | person tracked; chair as above |
+| Rotate the chair | Chair stays visible through the rotation | pending the chair retest |
+| Move the boom arm across the frame | Microphone and arm stay visible | microphone stays; the arm drops out in places while moving |
+| Prop leaves the frame and returns to the same place | Picked up again without re-seed | passed |
+| Prop returns to a different place | Needs Re-seed now; recovered after it | better than expected: tracked without a re-seed; Re-seed now kept it |
+| Change the lighting after calibration | No holes, no background leak | passed (room light off) |
 | Restart OBS with calibration on disk | Auto-seeds when the person is in frame | verified: phase goes to "Waiting for a person" and seeds on detection |
 | Switch compute units while tracking | Models reload, calibration kept | verified without a person: reload and return to "Waiting for a person" |
 | Edge refinement none / bilateral / guided | Compare edges and render time | measured (see Performance): bilateral cleanest, default; guided retuned |
-| Aligned mode | Status shows added latency; no halo on fast motion | status shows +69 ms, render time unchanged; fast-motion halo check not run yet |
+| Aligned mode | Status shows added latency; no halo on fast motion | +51 to 69 ms; no background leak on fast waving, unlike lowest latency; the tracker itself leaves holes inside motion-blurred hands |
 
 What was verified end to end without a person: the calibration flow
 (countdown, plate averaging, props mask extraction, persistence), seeding

@@ -62,6 +62,15 @@ the OBS-free logic library and the benchmark.
 - The five calibration actions are hotkeys on the parent source
   (`matanyone2.capture_clean_plate` and so on); obs-websocket's
   `TriggerHotkeyByName` reaches them, which `scripts/obsctl.py` uses.
+- Seeding hands the tracker two frames (`MattingWorker.plant`): the props
+  plate with the props mask as the permanent memory, then the current frame
+  with person plus the props found now (`SeedComposer.liveProps`). The
+  automatic seed waits for two agreeing Vision observations
+  (`AutoSeedGate`). All three came out of the first live test: a seed taken
+  with the person in front of the chair never shows the tracker the chair,
+  and a seed taken while walking in leaves a hole where the head arrives.
+- Alignment defaults to aligned (+51 to 69 ms); lowest latency leaks
+  background around fast motion.
 - Edge refinement defaults to joint bilateral upsampling (measured cleanest,
   no measurable render cost). The guided filter runs at radius 4 / eps 0.01
   and only inside the band where the matte is uncertain; radius 8 / eps 0.001
