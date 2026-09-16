@@ -70,6 +70,8 @@ private struct Harness {
     static var defaultOptions: WorkerOptions {
         var options = WorkerOptions()
         options.propsMinRegion = 8
+        // Tests drive the clock themselves; re-seed only where a test asks.
+        options.reseedIntervalSeconds = 0
         return options
     }
 

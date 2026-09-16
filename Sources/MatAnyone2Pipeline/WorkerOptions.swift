@@ -11,7 +11,7 @@ public struct WorkerOptions: Equatable, Sendable {
     /// Minimum props region area in working-resolution pixels.
     public var propsMinRegion = 200
     /// 0 = off.
-    public var reseedIntervalSeconds = 0
+    public var reseedIntervalSeconds = 30
     /// 0 = unlimited.
     public var maxMatteFPS = 0
     public var postprocess = PostprocessOptions()

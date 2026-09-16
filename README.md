@@ -118,12 +118,14 @@ Two mechanisms refresh it without reloading the models:
   chair) is dropped rather than carried over. Use it when the matte has
   drifted.
 - **Periodic re-seed interval** does the same automatically every N seconds
-  (0 turns it off). It repairs drift in the person (a lost hand or hair
-  after fast motion) while keeping the props wherever they are now.
+  (default 30, 0 turns it off). It repairs drift in the person (a lost
+  hand or hair after fast motion, a torso that faded out while sitting
+  still) while keeping the props wherever they are now.
 
-What re-seeding cannot do: recover a prop the tracker has already lost, or
-remove background that has already leaked into the matte. In both cases the
-new seed is taken from the current output, so the mistake is carried over.
+Because every seed starts from the props plate, a re-seed also recovers a
+prop the tracker lost, as long as the prop is back where the plate shows
+it. What it cannot fix is background that differs from the clean plate
+and got tracked as a prop, such as a shadow the person casts on the wall.
 Press **Seed tracker now** with the props in their calibrated positions to
 start from the calibration mask again.
 
@@ -167,7 +169,7 @@ without the panel or triggered through obs-websocket.
 | Plate averaging frames | 16 | Frames averaged per plate to reduce sensor noise. |
 | Props difference threshold | 16 | Per-pixel difference (0 to 255) that counts as a prop. Raise it when background noise appears in the mask, lower it when parts of a prop are missing. |
 | Minimum props region size | 200 px | Regions smaller than this many working-resolution pixels are discarded. 64 let a bag handle and a reflection through on a 512x288 plate. |
-| Periodic re-seed interval | 0 s | Automatic re-seed every N seconds; 0 is off. |
+| Periodic re-seed interval | 30 s | Automatic re-seed every N seconds; 0 is off. The tracker drifts within a few minutes of sitting still (the torso faded out in one test), and a re-seed takes about 150 ms without a visible gap. |
 
 ### Output quality
 
