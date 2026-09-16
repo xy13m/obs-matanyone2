@@ -9,7 +9,7 @@ public struct WorkerOptions: Equatable, Sendable {
     public var plateFrames = 16
     public var propsThreshold = 16
     /// Minimum props region area in working-resolution pixels.
-    public var propsMinRegion = 64
+    public var propsMinRegion = 200
     /// 0 = off.
     public var reseedIntervalSeconds = 0
     /// 0 = unlimited.

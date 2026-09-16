@@ -83,12 +83,12 @@ void filter_defaults(obs_data_t *settings) {
     obs_data_set_default_int(settings, "countdown_seconds", 3);
     obs_data_set_default_int(settings, "plate_frames", 16);
     obs_data_set_default_int(settings, "props_threshold", 16);
-    obs_data_set_default_int(settings, "props_min_region", 64);
+    obs_data_set_default_int(settings, "props_min_region", 200);
     obs_data_set_default_int(settings, "reseed_interval", 0);
     obs_data_set_default_string(settings, "edge_refinement", "bilateral");
     obs_data_set_default_double(settings, "edge_offset", 0.0);
     obs_data_set_default_double(settings, "temporal_smoothing", 0.0);
-    obs_data_set_default_string(settings, "alignment", "lowest_latency");
+    obs_data_set_default_string(settings, "alignment", "aligned");
     obs_data_set_default_string(settings, "compute_units", "cpu_ane");
     obs_data_set_default_int(settings, "max_matte_fps", 0);
     obs_data_set_default_bool(settings, "gpu_downscale", true);

@@ -19,7 +19,7 @@ public struct CalibrationData: Equatable, Sendable {
 
     public init(
         cleanPlate: Plate? = nil, propsPlate: Plate? = nil, propsMask: Mask? = nil,
-        propsRegions: Int = 0, threshold: Int = 16, minRegion: Int = 64, capturedAt: Date? = nil
+        propsRegions: Int = 0, threshold: Int = 16, minRegion: Int = 200, capturedAt: Date? = nil
     ) {
         self.cleanPlate = cleanPlate
         self.propsPlate = propsPlate
