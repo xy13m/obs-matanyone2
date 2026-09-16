@@ -269,7 +269,7 @@ private struct Harness {
     }
 
     @Test func periodicReseedUsesTrackedProps() throws {
-        var options = WorkerOptions()
+        var options = Harness.defaultOptions
         options.reseedIntervalSeconds = 10
         let h = try Harness(options: options)
         defer { h.stop() }
@@ -280,10 +280,11 @@ private struct Harness {
         h.engine.alphaToReturn = (0..<512).map { ($0 % 32) < 12 || ($0 % 32) >= 26 ? 1 : 0 }
         h.worker.request(.seed)
         #expect(h.waitForPhase(.tracking))
-        h.submit(id: 200)
+        // The prop differs from the clean plate at x 26-31 in every frame; the
+        // re-seed may run on whichever frame the worker saw last.
+        h.submit(id: 200, rect: (x: 26, y: 0, w: 6, h: 16))
         #expect(h.wait { h.engine.steps >= 1 })
         h.clock.advance(seconds: 11)
-        // The prop still differs from the clean plate at x 26-31.
         h.submit(id: 201, rect: (x: 26, y: 0, w: 6, h: 16))
         #expect(h.wait { h.engine.seeds.count == 2 })
         #expect(h.engine.memoryFrames.count == 2)
