@@ -24,8 +24,9 @@ public enum SeedComposer {
     /// little since calibration is picked up where it stands; new objects,
     /// shadows and a room-wide lighting change (one region covering
     /// everything) are not. Empty when the result is more than
-    /// `maximumGrowth` times or less than `minimumFraction` of the calibrated
-    /// mask; the caller then seeds with the calibrated mask.
+    /// `maximumGrowth` times the calibrated mask; the caller then seeds with
+    /// the calibrated mask. A small result is normal: a seated person hides
+    /// most of the chair, and the visible props must still be labelled.
     public static func liveProps(
         current: Plate, clean: Plate, calibrated: Mask, person: Mask, threshold: UInt8,
         minRegion: Int
@@ -49,9 +50,7 @@ public enum SeedComposer {
             let label = Int(components.labels[i]) - 1
             if label >= 0 && keep[label] { out.pixels[i] = 255 }
         }
-        let found = Double(out.foregroundCount)
-        let expected = Double(calibrated.foregroundCount)
-        if found > maximumGrowth * expected || found < minimumFraction * expected {
+        if Double(out.foregroundCount) > maximumGrowth * Double(calibrated.foregroundCount) {
             return Mask(width: out.width, height: out.height)
         }
         return out
@@ -61,9 +60,6 @@ public enum SeedComposer {
     public static let minimumOverlap = 0.5
     /// Live props larger than this multiple of the calibrated mask are rejected.
     public static let maximumGrowth = 1.5
-    /// Live props smaller than this fraction of the calibrated mask count as
-    /// not found (a lighting change hides the props behind one big region).
-    public static let minimumFraction = 0.25
 
     /// Pixels around the person that are never taken for a prop.
     public static let personMargin = 2

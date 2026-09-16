@@ -737,13 +737,9 @@ public final class MattingWorker: @unchecked Sendable {
             current: current, clean: clean, calibrated: calibrated, person: person,
             threshold: UInt8(clamping: options.propsThreshold), minRegion: options.propsMinRegion)
         if live.foregroundCount == 0 {
-            if calibration.propsPlate != nil {
-                log(
-                    "props now: none found in the current frame; the props plate frame carries them"
-                )
-                return Mask(width: calibrated.width, height: calibrated.height)
-            }
-            log("props now: nothing overlaps the calibrated mask, seeding with it as is")
+            // Never label visible props as background: without a live mask the
+            // calibrated one is the safer guess for the current frame.
+            log("props now: none found in the current frame, using the calibrated mask")
             return calibrated
         }
         log(

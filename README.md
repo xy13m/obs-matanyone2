@@ -95,8 +95,10 @@ against live frames.
 
 If nothing in the current frame overlaps the calibrated props (the prop
 moved far, or the lighting differs so much from the plates that the whole
-frame counts as changed), the current frame contributes the person alone
-and the props plate frame still carries the props; the log says so.
+frame counts as changed), the current frame is seeded with the calibrated
+mask instead and the log says so. Pixels outside the mask are taught to
+the tracker as background, so an empty props mask on a frame that shows
+the boom arm would remove the arm.
 
 The automatic seed after start-up waits until Vision has reported the same
 person (at least 5 % of the frame, 85 % overlap between two observations

@@ -99,17 +99,17 @@ struct LivePropsTests {
         #expect(live.foregroundCount == 0)
     }
 
-    @Test func givesUpWhenOnlyAFragmentOfThePropsIsFound() {
+    @Test func keepsTheVisiblePartWhenThePersonHidesMostOfTheProps() {
         let clean = plate(rects: [])
         let calibrated = Mask(width: w, height: h).fillingRect(
             x: 30, y: 4, width: 24, height: 24, value: 255)
-        // Only a small corner of the calibrated props differs from the clean plate.
+        // Only a corner of the calibrated props shows; the rest is behind the person.
         let current = plate(rects: [(x: 30, y: 4, w: 6, h: 6)])
         let live = SeedComposer.liveProps(
             current: current, clean: clean, calibrated: calibrated,
-            person: Mask(width: w, height: h),
-            threshold: 16, minRegion: 8)
-        #expect(live.foregroundCount == 0)
+            person: Mask(width: w, height: h), threshold: 16, minRegion: 8)
+        #expect(live[32, 6] == 255)
+        #expect(live[50, 20] == 0)
     }
 
     @Test func maskIntersectionOverUnion() {
