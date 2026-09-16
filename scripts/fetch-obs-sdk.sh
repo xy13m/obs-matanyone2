@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Fetches the libobs headers matching the installed OBS version, plus the SIMDe
 # headers libobs needs on arm64. Both go under .build/ and are never committed.
 set -euo pipefail

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Installs the built bundle into the user's OBS plugins directory. The previous
 # install is kept as <bundle>.previous; older backups are removed.
 set -euo pipefail

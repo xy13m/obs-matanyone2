@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # One-shot setup: headers, dependencies, models, build and install. Safe to
 # rerun; finished stages are skipped.
 set -euo pipefail

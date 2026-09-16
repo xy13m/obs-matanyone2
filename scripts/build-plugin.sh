@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Builds the Swift bridge, compiles the OBS module and assembles the signed
 # plugin bundle at .build/plugin/obs-matanyone2-matting.plugin.
 #

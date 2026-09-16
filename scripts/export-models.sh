@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Exports the six MatAnyone 2 Core ML models at a landscape working resolution
 # and compiles them for the plugin bundle.
 #

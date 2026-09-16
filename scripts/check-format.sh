@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Checks C++, Objective-C and Swift formatting with the Xcode toolchain's
 # clang-format and swift-format. Pass --fix to rewrite files in place.
 set -euo pipefail
