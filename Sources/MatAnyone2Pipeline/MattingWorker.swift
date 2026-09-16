@@ -223,38 +223,46 @@ public final class MattingWorker: @unchecked Sendable {
     // MARK: - Worker loop
 
     private func run() {
-        loadModels()
-        while true {
-            condition.lock()
-            while !stopping && pending == nil && requests.isEmpty && !hasDeadline() {
-                condition.wait()
-            }
-            if !stopping && pending == nil && requests.isEmpty {
-                // A deadline is pending: sleep in short steps so an injected
-                // clock advanced by a test is noticed promptly.
-                condition.wait(until: Date(timeIntervalSinceNow: min(0.05, secondsToDeadline())))
-            }
-            if stopping {
-                condition.unlock()
-                return
-            }
-            let frame = pending
-            pending = nil
-            let queued = requests
-            requests.removeAll()
-            let currentOptions = options
-            condition.unlock()
+        autoreleasepool { loadModels() }
+        // The thread lives as long as the filter and Core ML autoreleases
+        // its outputs, so every iteration drains its own pool. Without it the
+        // process grows by several MB per prediction until Core ML fails.
+        while autoreleasepool(invoking: { runOnce() }) {}
+    }
 
-            postprocessor.options = currentOptions.postprocess
-            for request in queued {
-                handle(request, options: currentOptions)
-            }
-            if let frame {
-                process(frame, options: currentOptions)
-            }
-            tick(options: currentOptions)
-            publishStatus()
+    /// One scheduling round: wait for work, then handle requests, the pending
+    /// frame and timers. Returns false once the worker is asked to stop.
+    private func runOnce() -> Bool {
+        condition.lock()
+        while !stopping && pending == nil && requests.isEmpty && !hasDeadline() {
+            condition.wait()
         }
+        if !stopping && pending == nil && requests.isEmpty {
+            // A deadline is pending: sleep in short steps so an injected
+            // clock advanced by a test is noticed promptly.
+            condition.wait(until: Date(timeIntervalSinceNow: min(0.05, secondsToDeadline())))
+        }
+        if stopping {
+            condition.unlock()
+            return false
+        }
+        let frame = pending
+        pending = nil
+        let queued = requests
+        requests.removeAll()
+        let currentOptions = options
+        condition.unlock()
+
+        postprocessor.options = currentOptions.postprocess
+        for request in queued {
+            handle(request, options: currentOptions)
+        }
+        if let frame {
+            process(frame, options: currentOptions)
+        }
+        tick(options: currentOptions)
+        publishStatus()
+        return true
     }
 
     /// Called with `condition` held.
