@@ -284,10 +284,10 @@ each item in this table.
 
 | Scenario | Expected | Result |
 |---|---|---|
-| Lean left and right, forward and back | Person and chair stay complete | person complete; chair was missing before seed-time prop relocation, retest pending |
+| Lean left and right, forward and back | Person and chair stay complete | passed with two-frame seeding: chair back and headrest show when leaning; a little of the grey blanket behind the chair comes along |
 | Turn the head and the torso | No holes in hair or shoulders | passed; a light rim on the leading edge in lowest-latency mode |
-| Stand up and sit down | Person tracked while standing; chair stays | person tracked; chair as above |
-| Rotate the chair | Chair stays visible through the rotation | pending the chair retest |
+| Stand up and sit down | Person tracked while standing; chair stays | passed: person tracked standing and stepping aside, chair seat and armrest stay |
+| Rotate the chair | Chair stays visible through the rotation | passed (empty chair turned by hand while standing beside it) |
 | Move the boom arm across the frame | Microphone and arm stay visible | microphone stays; the arm drops out in places while moving |
 | Prop leaves the frame and returns to the same place | Picked up again without re-seed | passed |
 | Prop returns to a different place | Needs Re-seed now; recovered after it | better than expected: tracked without a re-seed; Re-seed now kept it |
