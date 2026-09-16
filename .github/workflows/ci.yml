@@ -11,13 +11,13 @@ on:
 # Everything involving inference is measured locally with the benchmark tool.
 jobs:
   test:
-    runs-on: macos-26
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v7
 
-      - name: Select the newest Xcode 26
+      - name: Select the newest Xcode 27
         run: |
-          xcode="$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          xcode="$(ls -d /Applications/Xcode_27*.app | sort -V | tail -1)"
           sudo xcode-select -s "$xcode"
           xcodebuild -version
           swift --version

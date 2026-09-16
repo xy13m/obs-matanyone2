@@ -82,7 +82,7 @@ the OBS-free logic library and the benchmark.
 
 ## Platform lock
 
-macOS 26 or newer, Apple Silicon only, current stable Xcode and Swift 6
+macOS 27 or newer, Apple Silicon only, current stable Xcode and Swift 6
 language mode with strict concurrency. No backwards compatibility. Use the
 newest Core ML, Vision and Metal APIs where they help, and verify each API
 against current Apple documentation (or the SDK's swiftinterface) before

@@ -1,10 +1,10 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.4
 
 import PackageDescription
 
 let package = Package(
     name: "obs-matanyone2",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v27)],
     products: [
         .library(name: "MatAnyone2Core", targets: ["MatAnyone2Core"]),
         // The dylib name must differ from the reference plugin's

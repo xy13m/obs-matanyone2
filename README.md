@@ -15,8 +15,8 @@ fast the matte is produced.
 
 - Apple Silicon Mac. Development and measurements were done on a Mac mini
   with an M4 Pro.
-- macOS 26 or newer.
-- The current stable Xcode (26.x) with its command line tools. `swift`,
+- macOS 27 or newer.
+- Xcode 27 with its command line tools. `swift`,
   `clang-format` and `swift-format` all come from the Xcode toolchain.
 - OBS Studio 32.2.x installed at `/Applications/OBS.app`. The build fetches
   the libobs headers for the exact installed version.

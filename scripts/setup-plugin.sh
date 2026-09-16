@@ -12,8 +12,8 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
     echo "obs-matanyone2 requires an Apple Silicon Mac." >&2
     exit 1
 fi
-if [[ "$(sw_vers -productVersion | cut -d. -f1)" -lt 26 ]]; then
-    echo "obs-matanyone2 requires macOS 26 or newer." >&2
+if [[ "$(sw_vers -productVersion | cut -d. -f1)" -lt 27 ]]; then
+    echo "obs-matanyone2 requires macOS 27 or newer." >&2
     exit 1
 fi
 if pgrep -x OBS >/dev/null 2>&1; then

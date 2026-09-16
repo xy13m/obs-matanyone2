@@ -58,7 +58,7 @@ sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
 xcrun --sdk macosx clang++ \
     -std=c++23 -O2 -Wall -Wextra \
     -isysroot "$sdk_path" \
-    -arch arm64 -mmacosx-version-min=26.0 \
+    -arch arm64 -mmacosx-version-min=27.0 \
     -bundle \
     -DPLUGIN_VERSION="\"$version\"" \
     -I "$root_dir/Plugin/include" \
