@@ -2,11 +2,16 @@
 //
 // Guided filter passes (He et al.) at half resolution. The guide I is the
 // luma of the frame, p is the working-resolution matte. The final
-// q = mean_a * I + mean_b happens in matanyone2.effect.
+// q = mean_a * I + mean_b happens in matanyone2.effect, which also keeps
+// mean_p to limit the filter to the band where the matte is uncertain.
 //
 //   Pack:  (I, p, I*I, I*p)            from image + matte
 //   BoxH / BoxV: separable box blur     of any RGBA16F texture
-//   Coeff: (a, b) = (cov/(var+eps), mean_p - a*mean_I)
+//   Coeff: (a, b, mean_p), a = cov/(var+eps), b = mean_p - a*mean_I
+//
+// Radius 4 at half resolution (a 17 px window at full resolution) with
+// eps 0.01: radius 8 with eps 0.001 transferred image texture into the
+// matte as grey halos around every edge.
 
 uniform float4x4 ViewProj;
 uniform texture2d image;
@@ -46,14 +51,14 @@ float4 PSPack(VertData v_in) : TARGET
 	return float4(i, p, i * i, i * p);
 }
 
-// Radius 8: 17 taps. Two passes give the box mean.
+// Radius 4: 9 taps. Two passes give the box mean.
 float4 box(float2 uv, float2 step)
 {
 	float4 sum = float4(0.0, 0.0, 0.0, 0.0);
-	for (int k = -8; k <= 8; k++) {
+	for (int k = -4; k <= 4; k++) {
 		sum += image.Sample(linear_clamp, uv + step * float(k));
 	}
-	return sum / 17.0;
+	return sum / 9.0;
 }
 
 float4 PSBoxH(VertData v_in) : TARGET
@@ -73,7 +78,7 @@ float4 PSCoeff(VertData v_in) : TARGET
 	float cov_ip = m.w - m.x * m.y;
 	float a = cov_ip / (var_i + eps);
 	float b = m.y - a * m.x;
-	return float4(a, b, 0.0, 1.0);
+	return float4(a, b, m.y, 1.0);
 }
 
 technique Pack

@@ -338,7 +338,7 @@ bool renderer::run_pass(gs_texrender_t *target, uint32_t width, uint32_t height,
     vec2 texel;
     vec2_set(&texel, texel_x, texel_y);
     gs_effect_set_vec2(gs_effect_get_param_by_name(guided_effect_, "texel_size"), &texel);
-    gs_effect_set_float(gs_effect_get_param_by_name(guided_effect_, "eps"), 0.001f);
+    gs_effect_set_float(gs_effect_get_param_by_name(guided_effect_, "eps"), 0.01f);
     while (gs_effect_loop(guided_effect_, technique))
         gs_draw_sprite(source, 0, width, height);
     gs_texrender_end(target);

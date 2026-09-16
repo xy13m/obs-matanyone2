@@ -8,7 +8,7 @@ uniform float4x4 ViewProj;
 uniform texture2d image;
 uniform texture2d matte;
 uniform texture2d lowres;     // working-resolution frame, for bilateral
-uniform texture2d coeff;      // (mean_a, mean_b) from the guided filter
+uniform texture2d coeff;      // (mean_a, mean_b, mean_p) from the guided filter
 uniform float2 output_size;   // full-resolution size in pixels
 uniform float2 lowres_size;   // working-resolution size in pixels
 uniform float checker_size;   // checkerboard square size in pixels
@@ -67,9 +67,14 @@ float refined_alpha(float2 uv, float3 rgb)
 	if (refinement == 1)
 		return bilateral_alpha(uv, rgb);
 	if (refinement == 2) {
-		float2 ab = coeff.Sample(linear_clamp, uv).rg;
+		// Apply the guided result only where the local matte mean is
+		// away from 0 and 1; inside and outside the object the plain
+		// matte stays, so image texture cannot leak into the alpha.
+		float3 c = coeff.Sample(linear_clamp, uv).rgb;
 		float i = dot(rgb, float3(0.2126, 0.7152, 0.0722));
-		return saturate(ab.x * i + ab.y);
+		float q = saturate(c.x * i + c.y);
+		float band = saturate(min(c.z, 1.0 - c.z) / 0.05);
+		return lerp(matte.Sample(linear_clamp, uv).r, q, band);
 	}
 	return matte.Sample(linear_clamp, uv).r;
 }
