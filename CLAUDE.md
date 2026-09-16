@@ -116,6 +116,22 @@ never committed.
   suites; the worker's behaviour is specified through the fakes in
   `Tests/MatAnyone2PipelineTests/MattingWorkerTests.swift`.
 
+## Pull request workflow
+
+`main` is protected by two rulesets: no force push, no deletion, and every
+change must arrive through a pull request whose CI `test` job passed. Nobody
+bypasses them, including the repository owner.
+
+- Never commit on `main` or push to it. Branch from `main`, commit there,
+  push the branch and open a pull request with `gh pr create --assignee @me`.
+- One pull request per topic. Keep the description to what changed and why;
+  put measurements in the description when the change affects latency or
+  matte quality.
+- Wait for `gh pr checks` to be green before calling the pull request ready.
+  If CI is red, fix it on the branch.
+- Do not merge pull requests. The repository owner reviews and merges. After
+  the merge, `git checkout main && git pull` before starting the next branch.
+
 ## Licensing
 
 Plugin code is GPL-3.0-or-later. MatAnyone2Kit is GPL-3.0. The MatAnyone 2
