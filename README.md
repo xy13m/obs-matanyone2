@@ -113,7 +113,10 @@ Two mechanisms refresh it without reloading the models:
 
 - **Re-seed now** clears the memory and seeds again: the props plate first,
   then the current frame with the person from Vision plus the props where
-  the tracker currently sees them. Use it when the matte has drifted.
+  the tracker currently sees them, limited to what differs from the clean
+  plate so background the tracker has crept into (a blanket behind the
+  chair) is dropped rather than carried over. Use it when the matte has
+  drifted.
 - **Periodic re-seed interval** does the same automatically every N seconds
   (0 turns it off). It repairs drift in the person (a lost hand or hair
   after fast motion) while keeping the props wherever they are now.

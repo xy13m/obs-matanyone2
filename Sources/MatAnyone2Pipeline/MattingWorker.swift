@@ -397,7 +397,8 @@ public final class MattingWorker: @unchecked Sendable {
                 if let raw = lastRawAlpha {
                     mask = try SeedComposer.refreshSeed(
                         person: person, trackedAlpha: raw,
-                        minSpeckArea: SpeckFilter.minimumArea(pixelCount: raw.count))
+                        minSpeckArea: SpeckFilter.minimumArea(pixelCount: raw.count),
+                        changed: changedSinceCleanPlate(frame: frame, options: options))
                 } else {
                     mask = try SeedComposer.initialSeed(
                         person: person,
@@ -721,6 +722,19 @@ public final class MattingWorker: @unchecked Sendable {
                 format: "auto-seeded (%@): person %.1f%%, current mask %.1f%%", how,
                 person.coverage * 100, mask.coverage * 100))
         transition(to: .tracking)
+    }
+
+    /// Where `frame` differs from the clean plate, cleaned up the way the
+    /// props plate is; nil without a clean plate.
+    private func changedSinceCleanPlate(frame: FrameBuffer, options: WorkerOptions) -> Mask? {
+        guard let clean = calibration.cleanPlate, clean.width == frame.width,
+            clean.height == frame.height
+        else { return nil }
+        let current = Plate(width: frame.width, height: frame.height, bgra: frame.bgra)
+        return PropsMaskExtractor.extract(
+            clean: clean, props: current, threshold: UInt8(clamping: options.propsThreshold),
+            minRegion: options.propsMinRegion
+        ).mask
     }
 
     /// The calibrated props re-located in the current frame (see

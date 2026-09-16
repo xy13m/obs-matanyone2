@@ -66,13 +66,26 @@ public enum SeedComposer {
 
     /// Person plus whatever non-person foreground the tracker currently
     /// reports. Used for manual and periodic re-seeds after props moved.
-    public static func refreshSeed(person: Mask, trackedAlpha: [Float], minSpeckArea: Int) throws
-        -> Mask
-    {
+    /// `changed` (where the current frame differs from the clean plate)
+    /// limits the tracked props: the tracker likes to spread from the person
+    /// into a similar-looking background right behind them, and background
+    /// that looks like the clean plate cannot be a prop. Props keep a margin
+    /// of `changedMargin` pixels around the changed area.
+    public static func refreshSeed(
+        person: Mask, trackedAlpha: [Float], minSpeckArea: Int, changed: Mask? = nil
+    ) throws -> Mask {
         try requireCoverage(person)
-        return person.union(
-            trackedProps(person: person, trackedAlpha: trackedAlpha, minSpeckArea: minSpeckArea))
+        var props = trackedProps(
+            person: person, trackedAlpha: trackedAlpha, minSpeckArea: minSpeckArea)
+        if let changed {
+            props = props.intersecting(changed.dilated(radius: changedMargin))
+        }
+        return person.union(props)
     }
+
+    /// How far tracked props may extend beyond the area that differs from
+    /// the clean plate, in working-resolution pixels.
+    public static let changedMargin = 2
 
     /// Tracked foreground (alpha >= 0.5, specks removed) minus the person.
     public static func trackedProps(person: Mask, trackedAlpha: [Float], minSpeckArea: Int) -> Mask

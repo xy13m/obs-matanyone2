@@ -66,7 +66,9 @@ the OBS-free logic library and the benchmark.
   plate with the props mask as the permanent memory, then the current frame
   with person plus the props found now (`SeedComposer.liveProps`). The
   automatic seed waits for two agreeing Vision observations
-  (`AutoSeedGate`). All three came out of the first live test: a seed taken
+  (`AutoSeedGate`). Re-seeds keep tracked props only where the frame
+  differs from the clean plate, so background the tracker crept into is
+  dropped. All of this came out of the first live test: a seed taken
   with the person in front of the chair never shows the tracker the chair,
   and a seed taken while walking in leaves a hole where the head arrives.
 - Alignment defaults to aligned (+51 to 69 ms); lowest latency leaks

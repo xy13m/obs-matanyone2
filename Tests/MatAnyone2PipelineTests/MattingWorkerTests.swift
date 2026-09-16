@@ -283,13 +283,38 @@ private struct Harness {
         h.submit(id: 200)
         #expect(h.wait { h.engine.steps >= 1 })
         h.clock.advance(seconds: 11)
-        h.submit(id: 201)
+        // The prop still differs from the clean plate at x 26-31.
+        h.submit(id: 201, rect: (x: 26, y: 0, w: 6, h: 16))
         #expect(h.wait { h.engine.seeds.count == 2 })
         #expect(h.engine.memoryFrames.count == 2)
         let second = try #require(h.engine.memoryFrames.last)
         #expect(second[26] == 1)
         #expect(second[20] == 0)
         #expect(h.logs.all.contains { $0.contains("person + tracked props") })
+    }
+
+    @Test func periodicReseedDropsTrackedBackground() throws {
+        var options = Harness.defaultOptions
+        options.reseedIntervalSeconds = 10
+        let h = try Harness(options: options)
+        defer { h.stop() }
+        #expect(h.waitForPhase(.uncalibrated))
+        #expect(h.calibrate())
+        h.segmenter.mask = Harness.person
+        // The tracker spread from the person over x 12-19, which looks exactly
+        // like the clean plate; the prop at x 26-31 is real.
+        h.engine.alphaToReturn = (0..<512).map { ($0 % 32) < 20 || ($0 % 32) >= 26 ? 1 : 0 }
+        h.worker.request(.seed)
+        #expect(h.waitForPhase(.tracking))
+        h.submit(id: 200, rect: (x: 26, y: 0, w: 6, h: 16))
+        #expect(h.wait { h.engine.steps >= 1 })
+        h.clock.advance(seconds: 11)
+        h.submit(id: 201, rect: (x: 26, y: 0, w: 6, h: 16))
+        #expect(h.wait { h.engine.memoryFrames.count == 2 })
+        let second = try #require(h.engine.memoryFrames.last)
+        #expect(second[8 * 32 + 28] == 1)
+        #expect(second[8 * 32 + 15] == 0)
+        #expect(second[8 * 32 + 5] == 1)
     }
 
     @Test func autoSeedsAfterLoadWhenCalibrated() throws {

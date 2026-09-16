@@ -40,6 +40,28 @@ import Testing
         #expect(seed.foregroundCount == 34)
     }
 
+    /// The tracker tends to spread from the person into a similar-looking
+    /// background right behind them. Tracked props that look the same as the
+    /// clean plate are not props and must not survive a re-seed.
+    @Test func refreshSeedDropsTrackedPixelsThatMatchTheCleanPlate() throws {
+        let person = Mask(width: 10, height: 10).fillingRect(
+            x: 0, y: 0, width: 3, height: 10, value: 255)
+        var alpha = [Float](repeating: 0, count: 100)
+        for y in 0..<10 {
+            for x in 0..<3 { alpha[y * 10 + x] = 1 }  // person
+            for x in 3..<9 { alpha[y * 10 + x] = 0.9 }  // tracked beyond the person
+        }
+        // Only x 6..8 differ from the clean plate (a prop); x 3..5 is background.
+        let changed = Mask(width: 10, height: 10).fillingRect(
+            x: 6, y: 0, width: 3, height: 10, value: 255)
+        let seed = try SeedComposer.refreshSeed(
+            person: person, trackedAlpha: alpha, minSpeckArea: 1, changed: changed)
+        #expect(seed[7, 5] == 255)
+        #expect(seed[5, 5] == 255)  // within the 2 px margin around the change
+        #expect(seed[3, 5] == 0)
+        #expect(seed[1, 5] == 255)
+    }
+
     @Test func trackedPropsExcludesPerson() {
         let person = Mask(width: 4, height: 1, pixels: [255, 255, 0, 0])
         let props = SeedComposer.trackedProps(

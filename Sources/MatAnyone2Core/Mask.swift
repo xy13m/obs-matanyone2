@@ -58,6 +58,16 @@ public struct Mask: Equatable, Sendable {
     }
 
     /// 255 where the pixel is at least `threshold`, 0 elsewhere.
+    /// Pixels set in both masks.
+    public func intersecting(_ other: Mask) -> Mask {
+        precondition(width == other.width && height == other.height)
+        var out = self
+        for i in out.pixels.indices where other.pixels[i] == 0 {
+            out.pixels[i] = 0
+        }
+        return out
+    }
+
     /// Jaccard overlap of the two foregrounds; 0 when both are empty.
     public func intersectionOverUnion(_ other: Mask) -> Double {
         precondition(width == other.width && height == other.height)
