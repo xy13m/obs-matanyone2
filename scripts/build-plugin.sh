@@ -12,7 +12,6 @@ height="${MA2_WORKING_HEIGHT:-288}"
 obs_source="$root_dir/.build/obs-studio"
 simde_source="$root_dir/.build/simde"
 models_dir="$root_dir/.build/models/${width}x${height}/MatAnyone"
-bridge_build="$root_dir/.build/arm64-apple-macosx/release"
 bundle_name="obs-matanyone2-matting"
 bundle="$root_dir/.build/plugin/$bundle_name.plugin"
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
@@ -35,6 +34,11 @@ export CLANG_MODULE_CACHE_PATH="$root_dir/.build/clang-module-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$root_dir/.build/swift-module-cache"
 swift build --package-path "$root_dir" --disable-sandbox -c release \
     --product MatAnyone2MattingBridge
+# Ask SwiftPM where it put the product; the directory layout differs between
+# toolchains (.build/arm64-apple-macosx/release before Swift 6.4,
+# .build/out/Products/Release after).
+bridge_build="$(swift build --package-path "$root_dir" --disable-sandbox -c release \
+    --product MatAnyone2MattingBridge --show-bin-path)"
 
 rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Frameworks" \
