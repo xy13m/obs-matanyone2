@@ -200,10 +200,11 @@ without the panel or triggered through obs-websocket.
 
 ## Performance
 
-Measured on a Mac mini M4 Pro, macOS 27.0 (built with Xcode 26.6, before the move to Xcode 27), CPU + Neural Engine,
-release build, with the Core ML integration test (`swift test -c release
---filter CoreMLEngineIntegrationTests`, synthetic frames, twelve tracking
-steps after the seed):
+Measured on a Mac mini M4 Pro, macOS 27.0, CPU + Neural Engine, release
+build made with Xcode 26.6 (before the move to Xcode 27), with the Core ML
+integration test (`swift test -c release --filter
+CoreMLEngineIntegrationTests`, synthetic frames, twelve tracking steps after
+the seed):
 
 | Working resolution | Seed (10 warm-up steps) | Tracking step p50 | Verdict |
 |---|---|---|---|
