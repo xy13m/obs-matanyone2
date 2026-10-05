@@ -7,8 +7,22 @@ on:
 
 # The hosted macOS runners are Apple Silicon but cannot exercise the Neural
 # Engine, Core ML model loading or the capture card. This workflow only checks
-# formatting, builds the Swift targets and runs the OBS-free unit tests.
-# Everything involving inference is measured locally with the benchmark tool.
+# formatting, builds the Swift targets, runs the OBS-free unit tests and
+# syntax-checks the OBS module against the libobs headers (it cannot link
+# without OBS.app). Everything involving inference is measured locally with
+# the benchmark tool.
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in step with the OBS version installed on the development machine
+  # (scripts/fetch-obs-sdk.sh reads the same variable).
+  OBS_VERSION: 32.2.2
+  # Keep in step with simde_tag in scripts/fetch-obs-sdk.sh.
+  SIMDE_TAG: v0.8.2
+
 jobs:
   test:
     runs-on: xcode-27
@@ -22,14 +36,40 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: Cache SwiftPM checkouts
+      - name: Record the Xcode version
+        id: xcode
+        run: echo "version=$(xcodebuild -version | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+
+      # SwiftPM checkouts and compiled dependencies. With Xcode 27 the build
+      # products live in .build/out. A stale cache is still useful, so fall
+      # back to the newest entry for the same Xcode.
+      - name: Cache SwiftPM build
         uses: actions/cache@v6
         with:
-          path: .build/checkouts
-          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          path: |
+            .build
+            !.build/obs-studio
+            !.build/simde
+          key: swiftpm-${{ runner.os }}-${{ steps.xcode.outputs.version }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ steps.xcode.outputs.version }}-
+
+      - name: Cache OBS and SIMDe headers
+        uses: actions/cache@v6
+        with:
+          path: |
+            .build/obs-studio
+            .build/simde
+          key: obs-sdk-${{ env.OBS_VERSION }}-simde-${{ env.SIMDE_TAG }}
 
       - name: Check formatting
         run: scripts/check-format.sh
+
+      - name: Fetch OBS headers
+        run: scripts/fetch-obs-sdk.sh
+
+      - name: Check plugin syntax (C++)
+        run: scripts/check-plugin-syntax.sh
 
       - name: Build
         run: swift build
