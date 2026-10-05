@@ -205,8 +205,8 @@ public func ma2GetStatus(
     _ pointer: UnsafeMutableRawPointer?, _ out: UnsafeMutablePointer<ma2_status>?
 ) {
     guard let context = context(pointer), let out else { return }
-    let s = context.worker.status()
-    out.pointee.version = context.worker.statusVersion
+    let (s, version) = context.worker.versionedStatus()
+    out.pointee.version = version
     out.pointee.phase = s.phase.rawValue
     out.pointee.countdown_remaining_s = Float(s.countdownRemaining)
     out.pointee.matte_fps = Float(s.matteFPS)
@@ -226,6 +226,12 @@ public func ma2GetStatus(
     }
     withUnsafeMutableBytes(of: &out.pointee.overlay_title) { copy(lines.title, into: $0) }
     withUnsafeMutableBytes(of: &out.pointee.overlay_detail) { copy(lines.detail, into: $0) }
+}
+
+@_cdecl("ma2_get_phase")
+public func ma2GetPhase(_ pointer: UnsafeMutableRawPointer?) -> Int32 {
+    guard let context = context(pointer) else { return Phase.error.rawValue }
+    return context.worker.currentPhase().rawValue
 }
 
 @_cdecl("ma2_set_display_latency")

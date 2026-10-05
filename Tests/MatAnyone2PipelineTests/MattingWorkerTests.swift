@@ -169,6 +169,20 @@ private struct Harness {
         #expect(h.worker.status().workingWidth == 32)
     }
 
+    @Test func versionedStatusAdvancesWithTheSnapshot() throws {
+        let h = try Harness()
+        defer { h.stop() }
+        #expect(h.waitForPhase(.uncalibrated))
+        let before = h.worker.versionedStatus()
+        #expect(before.snapshot == h.worker.status())
+        h.worker.request(.captureClean)
+        #expect(h.waitForPhase(.capturingClean))
+        let after = h.worker.versionedStatus()
+        #expect(after.snapshot.phase == .capturingClean)
+        #expect(after.version != before.version)
+        #expect(h.worker.currentPhase() == .capturingClean)
+    }
+
     @Test func cleanPlateCaptureCountsDownAndAverages() throws {
         let h = try Harness()
         defer { h.stop() }
