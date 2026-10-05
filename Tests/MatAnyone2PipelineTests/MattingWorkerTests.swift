@@ -503,7 +503,7 @@ private struct Harness {
         #expect(h.calibrate(scale: 2))
         h.segmenter.mask = Harness.person
         h.engine.alphaToReturn = (0..<512).map { ($0 % 32) < 12 ? 1 : 0 }
-        // The seed uses the newest frame, which is still 64x32 here.
+        // The newest submitted frame is still 64x32 here.
         #expect(h.submitAndWait(id: 90_400, rect: (x: 20, y: 4, w: 8, h: 8), scale: 2))
         h.worker.request(.seed)
         #expect(h.waitForPhase(.tracking))
@@ -531,12 +531,15 @@ private struct Harness {
         for _ in 0..<4 {
             for scale in [1, 2, 1, 3] {
                 let before = h.engine.steps
-                // The mailbox may drop a frame; keep submitting until one runs.
+                // Several frames per size: a buffer held across the size change
+                // comes back to the new pool on the next frame, and only a
+                // later submit would take it out again. The mailbox may drop
+                // frames; keep submitting until three have run.
                 #expect(
                     h.wait {
                         h.submit(id: id, scale: scale)
                         id += 1
-                        return h.engine.steps > before
+                        return h.engine.steps >= before + 3
                     })
             }
         }

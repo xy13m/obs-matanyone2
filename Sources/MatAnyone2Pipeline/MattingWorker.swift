@@ -56,12 +56,10 @@ public final class MattingWorker: @unchecked Sendable {
     private var calibration = CalibrationData()
     private var autoSeedGate = AutoSeedGate()
     private var lastFrame: FrameBuffer?
-    private var workingFrame: FrameBuffer
-    /// Working-size copy of the newest frame when frames arrive larger than
-    /// the working size. Seeding and re-seeding read `lastFrame`, and Vision
-    /// masks must match the working-size masks they are combined with. Never
-    /// pooled.
-    private let seedFrame: FrameBuffer
+    /// Downscale target when frames arrive larger than the working size. It
+    /// then also serves as `lastFrame`, so seeding always sees a working-size
+    /// frame. Never pooled.
+    private let workingFrame: FrameBuffer
     private var preprocessor: FramePreprocessor
     private var postprocessor: Postprocessor
     private var imageTensor: [Float]
@@ -102,7 +100,6 @@ public final class MattingWorker: @unchecked Sendable {
         self.clock = clock
         self.log = log
         workingFrame = FrameBuffer(width: workingWidth, height: workingHeight)
-        seedFrame = FrameBuffer(width: workingWidth, height: workingHeight)
         preprocessor = FramePreprocessor(width: workingWidth, height: workingHeight)
         postprocessor = Postprocessor(width: workingWidth, height: workingHeight)
         postprocessor.options = options.postprocess
@@ -161,6 +158,10 @@ public final class MattingWorker: @unchecked Sendable {
             return false
         }
         condition.unlock()
+        // The copy below reads height * width * 4 bytes from the caller's
+        // surface; a buffer of another size would read past its end.
+        precondition(
+            buffer.width == width && buffer.height == height, "pooled buffer size mismatch")
 
         buffer.copy(from: bgra, stride: stride)
         buffer.frameID = frameID
@@ -516,8 +517,7 @@ public final class MattingWorker: @unchecked Sendable {
             FramePreprocessor.downscale(frame, into: workingFrame)
             working = workingFrame
             // downscale carries frameID and captureNs over to workingFrame.
-            seedFrame.copy(from: workingFrame)
-            retain(seedFrame)
+            retain(workingFrame)
             condition.lock()
             pool?.give(frame)
             condition.unlock()
@@ -534,11 +534,11 @@ public final class MattingWorker: @unchecked Sendable {
     }
 
     /// Keeps the newest frame for seeding and returns the previous one to the
-    /// pool, unless it is the worker's own `seedFrame`.
+    /// pool, unless it is the worker's own `workingFrame`.
     private func retain(_ frame: FrameBuffer) {
         let previous = lastFrame
         lastFrame = frame
-        if let previous, previous !== frame, previous !== seedFrame {
+        if let previous, previous !== frame, previous !== workingFrame {
             condition.lock()
             pool?.give(previous)
             condition.unlock()
