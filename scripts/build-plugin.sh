@@ -15,8 +15,8 @@ simde_source="$root_dir/.build/simde"
 models_dir="$root_dir/.build/models/${width}x${height}/MatAnyone"
 bundle_name="obs-matanyone2-matting"
 bundle="$root_dir/.build/plugin/$bundle_name.plugin"
-version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
-    "$root_dir/Plugin/Info.plist")"
+# shellcheck source=lib/plugin-flags.sh
+source "$root_dir/scripts/lib/plugin-flags.sh"
 
 if [[ ! -f "$obs_source/libobs/obs-module.h" ]]; then
     echo "OBS headers are missing. Run scripts/fetch-obs-sdk.sh first." >&2
@@ -52,19 +52,8 @@ cp "$bridge_build/libMatAnyone2MattingBridge.dylib" "$bundle/Contents/Frameworks
 cp -R "$models_dir" "$bundle/Contents/Resources/models/MatAnyone"
 chmod -R u+w "$bundle"
 
-# Select the macOS SDK explicitly: a bare xcrun can pick a Command Line Tools
-# SDK that is newer than the Xcode linker understands.
-sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
-xcrun --sdk macosx clang++ \
-    -std=c++23 -O2 -Wall -Wextra \
-    -isysroot "$sdk_path" \
-    -arch arm64 -mmacosx-version-min=27.0 \
+xcrun --sdk macosx clang++ -O2 "${plugin_cxx_flags[@]}" \
     -bundle \
-    -DPLUGIN_VERSION="\"$version\"" \
-    -I "$root_dir/Plugin/include" \
-    -I "$obs_source/libobs" \
-    -I "$simde_source" \
-    -I "$root_dir/Sources/MatAnyone2BridgeABI/include" \
     -F /Applications/OBS.app/Contents/Frameworks \
     -framework libobs \
     -L "$bridge_build" -lMatAnyone2MattingBridge \
