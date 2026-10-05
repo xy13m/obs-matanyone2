@@ -63,17 +63,18 @@ class renderer {
 
   private:
     bool render_target(obs_source_t *filter, gs_texrender_t *into);
-    void downscale(gs_texture_t *source, gs_texrender_t *into);
+    // Returns false when the pass could not run; `into` then keeps older content.
+    bool downscale(gs_texture_t *source, gs_texrender_t *into);
     // Creates both texrenders of an aligned-mode ring slot on first use.
     bool ensure_ring_slot(size_t slot);
     void stage_and_submit(ma2_context_t context, gs_texture_t *texture, uint64_t now_ns);
     void submit_full_resolution(ma2_context_t context, uint64_t now_ns);
-    void draw_texture(gs_texture_t *texture, gs_texture_t *lowres, gs_technique_t *technique,
-                      refinement_mode refinement, bool linear_srgb);
+    void draw_texture(gs_texture_t *texture, uint64_t frame_id, gs_texture_t *lowres,
+                      gs_technique_t *technique, refinement_mode refinement, bool linear_srgb);
     // Runs the guided filter passes at half resolution; returns the (a, b)
     // coefficient texture or nullptr when the passes could not run. Later
     // draws of the same frame and matte (other views) reuse the result.
-    gs_texture_t *guided_coefficients(gs_texture_t *frame, bool linear_srgb);
+    gs_texture_t *guided_coefficients(gs_texture_t *frame, uint64_t frame_id, bool linear_srgb);
     bool run_pass(gs_texrender_t *target, uint32_t width, uint32_t height, const char *technique,
                   gs_texture_t *source, float texel_x, float texel_y);
 
@@ -126,7 +127,7 @@ class renderer {
     // Inputs of the coefficients currently in guided_blur_b_. Cleared when
     // the matte changes.
     struct guided_inputs {
-        uint64_t frame_time = 0;
+        uint64_t frame_id = 0;
         uint64_t matte_frame_id = 0;
         gs_texture_t *frame = nullptr;
         uint32_t width = 0;

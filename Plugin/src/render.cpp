@@ -162,8 +162,8 @@ bool renderer::capture(obs_source_t *filter, ma2_context_t context, const render
     }
     // The downscale always runs: bilateral refinement uses it as its guide
     // even when the worker gets the full frame.
-    downscale(gs_texrender_get_texture(current_), current_lowres_);
-    if (params.gpu_downscale)
+    const bool downscaled = downscale(gs_texrender_get_texture(current_), current_lowres_);
+    if (params.gpu_downscale && downscaled)
         stage_and_submit(context, gs_texrender_get_texture(current_lowres_), now_ns);
     else
         submit_full_resolution(context, now_ns);
@@ -206,12 +206,12 @@ bool renderer::render_target(obs_source_t *filter, gs_texrender_t *into) {
     return true;
 }
 
-void renderer::downscale(gs_texture_t *source, gs_texrender_t *into) {
+bool renderer::downscale(gs_texture_t *source, gs_texrender_t *into) {
     if (!source)
-        return;
+        return false;
     gs_texrender_reset(into);
     if (!gs_texrender_begin(into, working_width_, working_height_))
-        return;
+        return false;
     // Stage the bytes as stored, without sRGB decoding: the model was trained
     // on ordinary camera pixels.
     const bool previous_srgb = gs_framebuffer_srgb_enabled();
@@ -236,6 +236,7 @@ void renderer::downscale(gs_texture_t *source, gs_texrender_t *into) {
     gs_blend_state_pop();
     gs_enable_framebuffer_srgb(previous_srgb);
     gs_texrender_end(into);
+    return true;
 }
 
 void renderer::stage_and_submit(ma2_context_t context, gs_texture_t *texture, uint64_t now_ns) {
@@ -342,12 +343,16 @@ void renderer::clear_matte() {
 float renderer::draw(obs_source_t *filter, const render_params &params, uint64_t now_ns) {
     gs_texture_t *frame = current_ ? gs_texrender_get_texture(current_) : nullptr;
     gs_texture_t *lowres = current_lowres_ ? gs_texrender_get_texture(current_lowres_) : nullptr;
+    // Identifies the pixels in `frame`, so cached guided coefficients are
+    // reused for as long as the same frame is drawn.
+    uint64_t frame_id = frame_id_;
     float latency_ms = 0.0f;
     if (params.alignment == alignment_mode::aligned && !ring_ids_.empty()) {
         const alignment_choice choice = choose_aligned(ring_ids_, matte_frame_id_, now_ns);
         if (ring_[choice.slot] && lowres_ring_[choice.slot]) {
             frame = gs_texrender_get_texture(ring_[choice.slot]);
             lowres = gs_texrender_get_texture(lowres_ring_[choice.slot]);
+            frame_id = ring_ids_.slots[choice.slot].frame_id;
             latency_ms = static_cast<float>(choice.latency_ns) / 1.0e6f;
         }
     }
@@ -368,7 +373,7 @@ float renderer::draw(obs_source_t *filter, const render_params &params, uint64_t
     }
     const bool previous_linear = gs_set_linear_srgb(true);
     const bool linear_srgb = gs_get_linear_srgb();
-    draw_texture(frame, lowres, technique, params.refinement, linear_srgb);
+    draw_texture(frame, frame_id, lowres, technique, params.refinement, linear_srgb);
     gs_set_linear_srgb(previous_linear);
     return latency_ms;
 }
@@ -391,9 +396,12 @@ bool renderer::run_pass(gs_texrender_t *target, uint32_t width, uint32_t height,
     return true;
 }
 
-gs_texture_t *renderer::guided_coefficients(gs_texture_t *frame, bool linear_srgb) {
-    // OBS draws the filter once per view with the same frame and matte.
-    const guided_inputs inputs{.frame_time = last_frame_time_,
+gs_texture_t *renderer::guided_coefficients(gs_texture_t *frame, uint64_t frame_id,
+                                            bool linear_srgb) {
+    // OBS draws the filter once per view, and in aligned mode the same ring
+    // frame is often drawn on consecutive video frames until a new matte
+    // arrives; both reuse the coefficients.
+    const guided_inputs inputs{.frame_id = frame_id,
                                .matte_frame_id = matte_frame_id_,
                                .frame = frame,
                                .width = frame_width_,
@@ -459,12 +467,12 @@ gs_texture_t *renderer::guided_coefficients(gs_texture_t *frame, bool linear_srg
 
 // Mirrors render_filter_tex in libobs so the output matches what
 // obs_source_process_filter_end would produce for an OBS_SOURCE_SRGB filter.
-void renderer::draw_texture(gs_texture_t *texture, gs_texture_t *lowres_texture,
+void renderer::draw_texture(gs_texture_t *texture, uint64_t frame_id, gs_texture_t *lowres_texture,
                             gs_technique_t *technique, refinement_mode refinement,
                             bool linear_srgb) {
     gs_texture_t *coefficients = nullptr;
     if (refinement == refinement_mode::guided) {
-        coefficients = guided_coefficients(texture, linear_srgb);
+        coefficients = guided_coefficients(texture, frame_id, linear_srgb);
         if (!coefficients)
             refinement = refinement_mode::none;
     }

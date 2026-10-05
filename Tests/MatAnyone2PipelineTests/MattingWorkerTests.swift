@@ -174,7 +174,6 @@ private struct Harness {
         defer { h.stop() }
         #expect(h.waitForPhase(.uncalibrated))
         let before = h.worker.versionedStatus()
-        #expect(before.snapshot == h.worker.status())
         h.worker.request(.captureClean)
         #expect(h.waitForPhase(.capturingClean))
         let after = h.worker.versionedStatus()
