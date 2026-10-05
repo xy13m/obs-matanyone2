@@ -40,7 +40,18 @@ private final class FakeSegmenter: PersonSegmenter, @unchecked Sendable {
         get { lock.withLock { _mask } }
         set { lock.withLock { _mask = newValue } }
     }
-    func personMask(in frame: FrameBuffer) -> Mask? { mask }
+    /// Like Vision, the mask has the size of the frame it was asked about.
+    func personMask(in frame: FrameBuffer) -> Mask? {
+        guard let mask else { return nil }
+        if mask.width == frame.width && mask.height == frame.height { return mask }
+        var out = Mask(width: frame.width, height: frame.height)
+        for y in 0..<frame.height {
+            for x in 0..<frame.width {
+                out[x, y] = mask[x * mask.width / frame.width, y * mask.height / frame.height]
+            }
+        }
+        return out
+    }
 }
 
 private final class FakeClock: WorkerClock, @unchecked Sendable {
@@ -100,14 +111,21 @@ private struct Harness {
         try? store.clear()
     }
 
-    /// A frame with the given fill and an optional brighter rectangle.
-    func submit(id: UInt64, fill: UInt8 = 40, rect: (x: Int, y: Int, w: Int, h: Int)? = nil) {
-        var bgra = [UInt8](repeating: fill, count: 32 * 16 * 4)
+    /// A frame with the given fill and an optional brighter rectangle. `scale`
+    /// multiplies the 32x16 working size, like a renderer that skips its GPU
+    /// downscale; the rectangle is given in working-size pixels.
+    func submit(
+        id: UInt64, fill: UInt8 = 40, rect: (x: Int, y: Int, w: Int, h: Int)? = nil,
+        scale: Int = 1
+    ) {
+        let width = 32 * scale
+        let height = 16 * scale
+        var bgra = [UInt8](repeating: fill, count: width * height * 4)
         for i in stride(from: 3, to: bgra.count, by: 4) { bgra[i] = 255 }
         if let rect {
-            for y in rect.y..<rect.y + rect.h {
-                for x in rect.x..<rect.x + rect.w {
-                    let p = (y * 32 + x) * 4
+            for y in rect.y * scale..<(rect.y + rect.h) * scale {
+                for x in rect.x * scale..<(rect.x + rect.w) * scale {
+                    let p = (y * width + x) * 4
                     bgra[p] = 200
                     bgra[p + 1] = 200
                     bgra[p + 2] = 200
@@ -116,7 +134,7 @@ private struct Harness {
         }
         bgra.withUnsafeBufferPointer {
             _ = worker.submit(
-                bgra: $0.baseAddress!, stride: 128, width: 32, height: 16, frameID: id,
+                bgra: $0.baseAddress!, stride: width * 4, width: width, height: height, frameID: id,
                 captureNs: clock.nowNs())
         }
     }
@@ -135,14 +153,14 @@ private struct Harness {
     }
 
     /// Runs the whole calibration: clean plate (flat), props plate (rectangle).
-    func calibrate() -> Bool {
+    func calibrate(scale: Int = 1) -> Bool {
         worker.request(.captureClean)
         guard waitForPhase(.capturingClean) else { return false }
         clock.advance(seconds: 3)
         var id: UInt64 = 1
         guard
             wait(for: {
-                submit(id: id)
+                submit(id: id, scale: scale)
                 id += 1
                 return worker.status().phase == .cleanCaptured
             })
@@ -151,7 +169,7 @@ private struct Harness {
         guard waitForPhase(.capturingProps) else { return false }
         clock.advance(seconds: 3)
         return wait {
-            submit(id: id, rect: (x: 20, y: 4, w: 8, h: 8))
+            submit(id: id, rect: (x: 20, y: 4, w: 8, h: 8), scale: scale)
             id += 1
             return worker.status().phase == .propsCaptured
         }
@@ -419,5 +437,50 @@ private struct Harness {
         #expect(h.calibrate())
         h.worker.request(.setComputeUnits(.cpuAndGPU))
         #expect(h.waitForPhase(.waitingForPerson))
+    }
+
+    @Test func framesLargerThanTheWorkingSizeSeedAndTrack() throws {
+        let h = try Harness()
+        defer { h.stop() }
+        #expect(h.waitForPhase(.uncalibrated))
+        #expect(h.calibrate(scale: 2))
+        h.segmenter.mask = Harness.person
+        h.engine.alphaToReturn = (0..<512).map { ($0 % 32) < 12 ? 1 : 0 }
+        // The seed uses the newest frame, which is still 64x32 here.
+        h.submit(id: 400, rect: (x: 20, y: 4, w: 8, h: 8), scale: 2)
+        h.worker.request(.seed)
+        #expect(h.waitForPhase(.tracking))
+        let before = h.engine.steps
+        for id in 500..<510 {
+            h.submit(id: UInt64(id), scale: 2)
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        #expect(h.wait { h.engine.steps > before })
+        #expect(h.worker.pollMatte() != nil || h.wait { h.worker.pollMatte() != nil })
+    }
+
+    @Test func frameSizeChangesKeepFramesFlowing() throws {
+        let h = try Harness()
+        defer { h.stop() }
+        #expect(h.waitForPhase(.uncalibrated))
+        #expect(h.calibrate())
+        h.segmenter.mask = Harness.person
+        h.engine.alphaToReturn = (0..<512).map { ($0 % 32) < 12 ? 1 : 0 }
+        h.worker.request(.seed)
+        #expect(h.waitForPhase(.tracking))
+        var id: UInt64 = 1000
+        for _ in 0..<4 {
+            for scale in [1, 2, 1, 3] {
+                let before = h.engine.steps
+                // The mailbox may drop a frame; keep submitting until one runs.
+                #expect(
+                    h.wait {
+                        h.submit(id: id, scale: scale)
+                        id += 1
+                        return h.engine.steps > before
+                    })
+            }
+        }
+        #expect(h.worker.status().phase == .tracking)
     }
 }

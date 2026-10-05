@@ -56,6 +56,11 @@ public final class MattingWorker: @unchecked Sendable {
     private var autoSeedGate = AutoSeedGate()
     private var lastFrame: FrameBuffer?
     private var workingFrame: FrameBuffer
+    /// Working-size copy of the newest frame when frames arrive larger than
+    /// the working size. Seeding and re-seeding read `lastFrame`, and Vision
+    /// masks must match the working-size masks they are combined with. Never
+    /// pooled.
+    private let seedFrame: FrameBuffer
     private var preprocessor: FramePreprocessor
     private var postprocessor: Postprocessor
     private var imageTensor: [Float]
@@ -96,6 +101,7 @@ public final class MattingWorker: @unchecked Sendable {
         self.clock = clock
         self.log = log
         workingFrame = FrameBuffer(width: workingWidth, height: workingHeight)
+        seedFrame = FrameBuffer(width: workingWidth, height: workingHeight)
         preprocessor = FramePreprocessor(width: workingWidth, height: workingHeight)
         postprocessor = Postprocessor(width: workingWidth, height: workingHeight)
         postprocessor.options = options.postprocess
@@ -489,11 +495,17 @@ public final class MattingWorker: @unchecked Sendable {
         let working: FrameBuffer
         if frame.width == workingWidth && frame.height == workingHeight {
             working = frame
+            retain(frame)
         } else {
             FramePreprocessor.downscale(frame, into: workingFrame)
             working = workingFrame
+            // downscale carries frameID and captureNs over to workingFrame.
+            seedFrame.copy(from: workingFrame)
+            retain(seedFrame)
+            condition.lock()
+            pool?.give(frame)
+            condition.unlock()
         }
-        retain(frame)
 
         switch phase {
         case .capturingClean, .capturingProps:
@@ -505,11 +517,12 @@ public final class MattingWorker: @unchecked Sendable {
         }
     }
 
-    /// Keeps the newest frame for seeding and returns the previous one to the pool.
+    /// Keeps the newest frame for seeding and returns the previous one to the
+    /// pool, unless it is the worker's own `seedFrame`.
     private func retain(_ frame: FrameBuffer) {
         let previous = lastFrame
         lastFrame = frame
-        if let previous, previous !== frame {
+        if let previous, previous !== frame, previous !== seedFrame {
             condition.lock()
             pool?.give(previous)
             condition.unlock()
@@ -517,15 +530,16 @@ public final class MattingWorker: @unchecked Sendable {
     }
 
     private func accumulate(_ frame: FrameBuffer, options: WorkerOptions) {
-        guard var accumulator else { return }
+        guard accumulator != nil else { return }
         let now = clock.nowNs()
         // Frames arrive at 30-60 fps; start averaging close to the deadline so
         // the plate reflects the scene at the end of the countdown.
         let windowNs = UInt64(options.plateFrames) * 40_000_000 + 200_000_000
         if now + windowNs >= countdownDeadlineNs {
-            _ = accumulator.add(bgra: frame.bgra, frameID: frame.frameID)
+            // In place: copying the struct would duplicate its sums buffer.
+            _ = accumulator?.add(bgra: frame.bgra, frameID: frame.frameID)
         }
-        self.accumulator = accumulator
+        guard let accumulator else { return }
         if accumulator.isComplete || (now >= countdownDeadlineNs && accumulator.framesAdded > 0) {
             finishCapture(accumulator, options: options)
         }
