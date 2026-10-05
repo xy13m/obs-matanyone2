@@ -37,6 +37,31 @@ bool renderer::init(uint32_t working_width, uint32_t working_height) {
     downscale_effect_ = load_effect("effects/downscale.effect");
     composite_effect_ = load_effect("effects/matanyone2.effect");
     guided_effect_ = load_effect("effects/guided.effect");
+    if (downscale_effect_) {
+        downscale_params_.image = gs_effect_get_param_by_name(downscale_effect_, "image");
+        downscale_params_.texel_size = gs_effect_get_param_by_name(downscale_effect_, "texel_size");
+        downscale_params_.scale = gs_effect_get_param_by_name(downscale_effect_, "scale");
+    }
+    if (composite_effect_) {
+        auto &c = composite_params_;
+        c.image = gs_effect_get_param_by_name(composite_effect_, "image");
+        c.lowres = gs_effect_get_param_by_name(composite_effect_, "lowres");
+        c.matte = gs_effect_get_param_by_name(composite_effect_, "matte");
+        c.coeff = gs_effect_get_param_by_name(composite_effect_, "coeff");
+        c.refinement = gs_effect_get_param_by_name(composite_effect_, "refinement");
+        c.lowres_size = gs_effect_get_param_by_name(composite_effect_, "lowres_size");
+        c.output_size = gs_effect_get_param_by_name(composite_effect_, "output_size");
+        c.checker_size = gs_effect_get_param_by_name(composite_effect_, "checker_size");
+        c.draw = gs_effect_get_technique(composite_effect_, "Draw");
+        c.draw_alpha = gs_effect_get_technique(composite_effect_, "DrawAlpha");
+        c.draw_checker = gs_effect_get_technique(composite_effect_, "DrawChecker");
+    }
+    if (guided_effect_) {
+        guided_params_.image = gs_effect_get_param_by_name(guided_effect_, "image");
+        guided_params_.matte = gs_effect_get_param_by_name(guided_effect_, "matte");
+        guided_params_.texel_size = gs_effect_get_param_by_name(guided_effect_, "texel_size");
+        guided_params_.eps = gs_effect_get_param_by_name(guided_effect_, "eps");
+    }
     // BGRA so both staging paths hand the worker the byte order it expects.
     full_ = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
     work_ = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
@@ -85,11 +110,15 @@ void renderer::destroy() {
     downscale_effect_ = nullptr;
     gs_effect_destroy(guided_effect_);
     guided_effect_ = nullptr;
+    downscale_params_ = {};
+    composite_params_ = {};
+    guided_params_ = {};
     for (gs_texrender_t **texrender :
          {&guided_pack_, &guided_blur_a_, &guided_blur_b_, &guided_coeff_}) {
         gs_texrender_destroy(*texrender);
         *texrender = nullptr;
     }
+    guided_valid_ = false;
     has_matte_ = false;
     frame_width_ = 0;
     frame_height_ = 0;
@@ -192,15 +221,15 @@ void renderer::downscale(gs_texture_t *source, gs_texrender_t *into) {
     gs_ortho(0.0f, static_cast<float>(working_width_), 0.0f, static_cast<float>(working_height_),
              -100.0f, 100.0f);
 
-    gs_effect_set_texture(gs_effect_get_param_by_name(downscale_effect_, "image"), source);
+    gs_effect_set_texture(downscale_params_.image, source);
     vec2 texel_size;
     vec2_set(&texel_size, 1.0f / static_cast<float>(frame_width_),
              1.0f / static_cast<float>(frame_height_));
-    gs_effect_set_vec2(gs_effect_get_param_by_name(downscale_effect_, "texel_size"), &texel_size);
+    gs_effect_set_vec2(downscale_params_.texel_size, &texel_size);
     vec2 scale;
     vec2_set(&scale, static_cast<float>(frame_width_) / static_cast<float>(working_width_),
              static_cast<float>(frame_height_) / static_cast<float>(working_height_));
-    gs_effect_set_vec2(gs_effect_get_param_by_name(downscale_effect_, "scale"), &scale);
+    gs_effect_set_vec2(downscale_params_.scale, &scale);
     while (gs_effect_loop(downscale_effect_, "Draw"))
         gs_draw_sprite(source, 0, working_width_, working_height_);
 
@@ -264,6 +293,7 @@ void renderer::upload_matte(const ma2_matte &matte) {
     gs_texture_set_image(matte_, matte.alpha, matte.width, false);
     matte_frame_id_ = matte.frame_id;
     has_matte_ = true;
+    guided_valid_ = false;
 }
 
 void renderer::upload_overlay(const ma2_overlay &overlay) {
@@ -306,6 +336,7 @@ void renderer::draw_overlay() {
 
 void renderer::clear_matte() {
     has_matte_ = false;
+    guided_valid_ = false;
 }
 
 float renderer::draw(obs_source_t *filter, const render_params &params, uint64_t now_ns) {
@@ -324,13 +355,13 @@ float renderer::draw(obs_source_t *filter, const render_params &params, uint64_t
         obs_source_skip_video_filter(filter);
         return 0.0f;
     }
-    const char *technique = "Draw";
+    gs_technique_t *technique = composite_params_.draw;
     switch (params.preview) {
     case preview_mode::alpha:
-        technique = "DrawAlpha";
+        technique = composite_params_.draw_alpha;
         break;
     case preview_mode::checkerboard:
-        technique = "DrawChecker";
+        technique = composite_params_.draw_checker;
         break;
     case preview_mode::off:
         break;
@@ -344,19 +375,16 @@ float renderer::draw(obs_source_t *filter, const render_params &params, uint64_t
 
 // One full-screen pass of guided.effect into a half-resolution texrender.
 bool renderer::run_pass(gs_texrender_t *target, uint32_t width, uint32_t height,
-                        const char *technique, gs_texture_t *source, gs_texture_t *extra,
-                        float texel_x, float texel_y) {
+                        const char *technique, gs_texture_t *source, float texel_x, float texel_y) {
     gs_texrender_reset(target);
     if (!gs_texrender_begin(target, width, height))
         return false;
     gs_ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -100.0f, 100.0f);
-    gs_effect_set_texture(gs_effect_get_param_by_name(guided_effect_, "image"), source);
-    if (extra)
-        gs_effect_set_texture(gs_effect_get_param_by_name(guided_effect_, "matte"), extra);
+    gs_effect_set_texture(guided_params_.image, source);
     vec2 texel;
     vec2_set(&texel, texel_x, texel_y);
-    gs_effect_set_vec2(gs_effect_get_param_by_name(guided_effect_, "texel_size"), &texel);
-    gs_effect_set_float(gs_effect_get_param_by_name(guided_effect_, "eps"), 0.01f);
+    gs_effect_set_vec2(guided_params_.texel_size, &texel);
+    gs_effect_set_float(guided_params_.eps, 0.01f);
     while (gs_effect_loop(guided_effect_, technique))
         gs_draw_sprite(source, 0, width, height);
     gs_texrender_end(target);
@@ -364,6 +392,17 @@ bool renderer::run_pass(gs_texrender_t *target, uint32_t width, uint32_t height,
 }
 
 gs_texture_t *renderer::guided_coefficients(gs_texture_t *frame, bool linear_srgb) {
+    // OBS draws the filter once per view with the same frame and matte.
+    const guided_inputs inputs{.frame_time = last_frame_time_,
+                               .matte_frame_id = matte_frame_id_,
+                               .frame = frame,
+                               .width = frame_width_,
+                               .height = frame_height_,
+                               .linear_srgb = linear_srgb};
+    if (guided_valid_ && inputs == guided_inputs_)
+        return gs_texrender_get_texture(guided_blur_b_);
+    guided_valid_ = false;
+
     for (gs_texrender_t **texrender :
          {&guided_pack_, &guided_blur_a_, &guided_blur_b_, &guided_coeff_}) {
         if (!*texrender)
@@ -383,42 +422,45 @@ gs_texture_t *renderer::guided_coefficients(gs_texture_t *frame, bool linear_srg
 
     // Pack samples the frame the same way the composite does so the guide
     // luma matches between the passes and the final draw.
-    gs_eparam_t *image = gs_effect_get_param_by_name(guided_effect_, "image");
     if (linear_srgb)
-        gs_effect_set_texture_srgb(image, frame);
+        gs_effect_set_texture_srgb(guided_params_.image, frame);
     else
-        gs_effect_set_texture(image, frame);
+        gs_effect_set_texture(guided_params_.image, frame);
     gs_texrender_reset(guided_pack_);
     bool ok = gs_texrender_begin(guided_pack_, width, height);
     if (ok) {
         gs_ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -100.0f,
                  100.0f);
-        gs_effect_set_texture(gs_effect_get_param_by_name(guided_effect_, "matte"), matte_);
+        gs_effect_set_texture(guided_params_.matte, matte_);
         while (gs_effect_loop(guided_effect_, "Pack"))
             gs_draw_sprite(frame, 0, width, height);
         gs_texrender_end(guided_pack_);
     }
     ok = ok &&
-         run_pass(guided_blur_a_, width, height, "BoxH", gs_texrender_get_texture(guided_pack_),
-                  nullptr, tx, ty) &&
+         run_pass(guided_blur_a_, width, height, "BoxH", gs_texrender_get_texture(guided_pack_), tx,
+                  ty) &&
          run_pass(guided_blur_b_, width, height, "BoxV", gs_texrender_get_texture(guided_blur_a_),
-                  nullptr, tx, ty) &&
+                  tx, ty) &&
          run_pass(guided_coeff_, width, height, "Coeff", gs_texrender_get_texture(guided_blur_b_),
-                  nullptr, tx, ty) &&
+                  tx, ty) &&
          run_pass(guided_blur_a_, width, height, "BoxH", gs_texrender_get_texture(guided_coeff_),
-                  nullptr, tx, ty) &&
+                  tx, ty) &&
          run_pass(guided_blur_b_, width, height, "BoxV", gs_texrender_get_texture(guided_blur_a_),
-                  nullptr, tx, ty);
+                  tx, ty);
 
     gs_blend_state_pop();
     gs_enable_framebuffer_srgb(previous_framebuffer);
-    return ok ? gs_texrender_get_texture(guided_blur_b_) : nullptr;
+    if (!ok)
+        return nullptr;
+    guided_inputs_ = inputs;
+    guided_valid_ = true;
+    return gs_texrender_get_texture(guided_blur_b_);
 }
 
 // Mirrors render_filter_tex in libobs so the output matches what
 // obs_source_process_filter_end would produce for an OBS_SOURCE_SRGB filter.
 void renderer::draw_texture(gs_texture_t *texture, gs_texture_t *lowres_texture,
-                            const char *technique_name, refinement_mode refinement,
+                            gs_technique_t *technique, refinement_mode refinement,
                             bool linear_srgb) {
     gs_texture_t *coefficients = nullptr;
     if (refinement == refinement_mode::guided) {
@@ -430,29 +472,25 @@ void renderer::draw_texture(gs_texture_t *texture, gs_texture_t *lowres_texture,
     const bool previous_framebuffer = gs_framebuffer_srgb_enabled();
     gs_enable_framebuffer_srgb(linear_srgb);
 
-    gs_eparam_t *image = gs_effect_get_param_by_name(composite_effect_, "image");
-    gs_eparam_t *lowres = gs_effect_get_param_by_name(composite_effect_, "lowres");
+    const auto &c = composite_params_;
     if (linear_srgb) {
-        gs_effect_set_texture_srgb(image, texture);
-        gs_effect_set_texture_srgb(lowres, lowres_texture);
+        gs_effect_set_texture_srgb(c.image, texture);
+        gs_effect_set_texture_srgb(c.lowres, lowres_texture);
     } else {
-        gs_effect_set_texture(image, texture);
-        gs_effect_set_texture(lowres, lowres_texture);
+        gs_effect_set_texture(c.image, texture);
+        gs_effect_set_texture(c.lowres, lowres_texture);
     }
-    gs_effect_set_texture(gs_effect_get_param_by_name(composite_effect_, "matte"), matte_);
-    gs_effect_set_texture(gs_effect_get_param_by_name(composite_effect_, "coeff"),
-                          coefficients ? coefficients : matte_);
-    gs_effect_set_int(gs_effect_get_param_by_name(composite_effect_, "refinement"),
-                      static_cast<int>(refinement));
+    gs_effect_set_texture(c.matte, matte_);
+    gs_effect_set_texture(c.coeff, coefficients ? coefficients : matte_);
+    gs_effect_set_int(c.refinement, static_cast<int>(refinement));
     vec2 lowres_size;
     vec2_set(&lowres_size, static_cast<float>(working_width_), static_cast<float>(working_height_));
-    gs_effect_set_vec2(gs_effect_get_param_by_name(composite_effect_, "lowres_size"), &lowres_size);
+    gs_effect_set_vec2(c.lowres_size, &lowres_size);
     vec2 output_size;
     vec2_set(&output_size, static_cast<float>(frame_width_), static_cast<float>(frame_height_));
-    gs_effect_set_vec2(gs_effect_get_param_by_name(composite_effect_, "output_size"), &output_size);
-    gs_effect_set_float(gs_effect_get_param_by_name(composite_effect_, "checker_size"), 32.0f);
+    gs_effect_set_vec2(c.output_size, &output_size);
+    gs_effect_set_float(c.checker_size, 32.0f);
 
-    gs_technique_t *technique = gs_effect_get_technique(composite_effect_, technique_name);
     const size_t passes = gs_technique_begin(technique);
     for (size_t i = 0; i < passes; i++) {
         gs_technique_begin_pass(technique, i);

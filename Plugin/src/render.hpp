@@ -50,7 +50,6 @@ class renderer {
     void upload_matte(const ma2_matte &matte);
     // Forgets the current matte so the next draw passes the source through.
     void clear_matte();
-    bool has_matte() const { return has_matte_; }
 
     // Draws the composite for the current frame. Falls back to
     // obs_source_skip_video_filter when there is no matte or no frame. In
@@ -62,9 +61,6 @@ class renderer {
     void upload_overlay(const ma2_overlay &overlay);
     void draw_overlay();
 
-    uint32_t working_width() const { return working_width_; }
-    uint32_t working_height() const { return working_height_; }
-
   private:
     bool render_target(obs_source_t *filter, gs_texrender_t *into);
     void downscale(gs_texture_t *source, gs_texrender_t *into);
@@ -72,13 +68,14 @@ class renderer {
     bool ensure_ring_slot(size_t slot);
     void stage_and_submit(ma2_context_t context, gs_texture_t *texture, uint64_t now_ns);
     void submit_full_resolution(ma2_context_t context, uint64_t now_ns);
-    void draw_texture(gs_texture_t *texture, gs_texture_t *lowres, const char *technique,
+    void draw_texture(gs_texture_t *texture, gs_texture_t *lowres, gs_technique_t *technique,
                       refinement_mode refinement, bool linear_srgb);
     // Runs the guided filter passes at half resolution; returns the (a, b)
-    // coefficient texture or nullptr when the passes could not run.
+    // coefficient texture or nullptr when the passes could not run. Later
+    // draws of the same frame and matte (other views) reuse the result.
     gs_texture_t *guided_coefficients(gs_texture_t *frame, bool linear_srgb);
     bool run_pass(gs_texrender_t *target, uint32_t width, uint32_t height, const char *technique,
-                  gs_texture_t *source, gs_texture_t *extra, float texel_x, float texel_y);
+                  gs_texture_t *source, float texel_x, float texel_y);
 
     uint32_t working_width_ = 0;
     uint32_t working_height_ = 0;
@@ -96,11 +93,49 @@ class renderer {
     gs_effect_t *downscale_effect_ = nullptr;
     gs_effect_t *composite_effect_ = nullptr;
     gs_effect_t *guided_effect_ = nullptr;
+    // Parameter and technique handles, looked up once in init().
+    struct {
+        gs_eparam_t *image = nullptr;
+        gs_eparam_t *texel_size = nullptr;
+        gs_eparam_t *scale = nullptr;
+    } downscale_params_;
+    struct {
+        gs_eparam_t *image = nullptr;
+        gs_eparam_t *lowres = nullptr;
+        gs_eparam_t *matte = nullptr;
+        gs_eparam_t *coeff = nullptr;
+        gs_eparam_t *refinement = nullptr;
+        gs_eparam_t *lowres_size = nullptr;
+        gs_eparam_t *output_size = nullptr;
+        gs_eparam_t *checker_size = nullptr;
+        gs_technique_t *draw = nullptr;
+        gs_technique_t *draw_alpha = nullptr;
+        gs_technique_t *draw_checker = nullptr;
+    } composite_params_;
+    struct {
+        gs_eparam_t *image = nullptr;
+        gs_eparam_t *matte = nullptr;
+        gs_eparam_t *texel_size = nullptr;
+        gs_eparam_t *eps = nullptr;
+    } guided_params_;
     // Guided filter intermediates (RGBA16F, half resolution), created on first use.
     gs_texrender_t *guided_pack_ = nullptr;
     gs_texrender_t *guided_blur_a_ = nullptr;
     gs_texrender_t *guided_blur_b_ = nullptr;
     gs_texrender_t *guided_coeff_ = nullptr;
+    // Inputs of the coefficients currently in guided_blur_b_. Cleared when
+    // the matte changes.
+    struct guided_inputs {
+        uint64_t frame_time = 0;
+        uint64_t matte_frame_id = 0;
+        gs_texture_t *frame = nullptr;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        bool linear_srgb = false;
+        bool operator==(const guided_inputs &) const = default;
+    };
+    guided_inputs guided_inputs_{};
+    bool guided_valid_ = false;
     gs_texrender_t *full_ = nullptr;
     gs_texrender_t *work_ = nullptr;
     gs_texture_t *matte_ = nullptr;

@@ -54,7 +54,7 @@ float bilateral_alpha(float2 uv, float3 guide)
 			float2 tap = base + float2(x, y) * texel;
 			float3 c = straight_rgb(lowres.Sample(linear_clamp, tap));
 			float3 diff = c - guide;
-			float w = exp(-dot(d, d) * 0.5) * exp(-dot(diff, diff) * 60.0);
+			float w = exp(-(dot(d, d) * 0.5 + dot(diff, diff) * 60.0));
 			sum += matte.Sample(linear_clamp, tap).r * w;
 			weight_sum += w;
 		}
