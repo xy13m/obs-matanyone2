@@ -162,7 +162,7 @@ without the panel or triggered through obs-websocket.
 |---|---|---|
 | Capture clean plate | button | Countdown, then average frames of the empty room. |
 | Capture props plate | button | Countdown, then average frames with the props in place. |
-| Seed tracker now | button | Person from Vision plus the calibrated props mask. |
+| Seed tracker now | button | Person from Vision plus the props found in the current frame, falling back to the calibrated props mask. |
 | Re-seed now | button | Person from Vision plus the props as the tracker sees them now. |
 | Clear calibration | button | Delete the plates and the mask from disk; stop tracking. |
 | Countdown | 3 s | Delay between pressing a capture button and the capture. |
@@ -200,7 +200,7 @@ without the panel or triggered through obs-websocket.
 
 ## Performance
 
-Measured on a Mac mini M4 Pro, macOS 27.0, Xcode 26.6, CPU + Neural Engine,
+Measured on a Mac mini M4 Pro, macOS 27.0 (built with Xcode 26.6, before the move to Xcode 27), CPU + Neural Engine,
 release build, with the Core ML integration test (`swift test -c release
 --filter CoreMLEngineIntegrationTests`, synthetic frames, twelve tracking
 steps after the seed):
