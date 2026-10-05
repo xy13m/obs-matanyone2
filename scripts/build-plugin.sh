@@ -30,6 +30,12 @@ if [[ ! -f "$models_dir/manifest.json" ]]; then
     echo "Models for ${width}x${height} are missing. Run scripts/export-models.sh first." >&2
     exit 1
 fi
+for model in encoder uncert readout decoder maskencoder objsummary; do
+    if [[ ! -d "$models_dir/$model.mlmodelc" ]]; then
+        echo "Model $model.mlmodelc is missing from $models_dir. Run MA2_FORCE_EXPORT=1 scripts/export-models.sh." >&2
+        exit 1
+    fi
+done
 
 export CLANG_MODULE_CACHE_PATH="$root_dir/.build/clang-module-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$root_dir/.build/swift-module-cache"
