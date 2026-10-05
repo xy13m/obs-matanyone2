@@ -25,6 +25,28 @@ import Testing
         pool.give(a!)
         #expect(pool.take() != nil)
     }
+
+    @Test func poolDropsBuffersOfAnotherSize() {
+        let pool = FrameBufferPool(width: 2, height: 2, capacity: 1)
+        let own = pool.take()!
+        #expect(pool.take() == nil)
+        pool.give(FrameBuffer(width: 4, height: 4))
+        #expect(pool.take() == nil)
+        pool.give(own)
+        #expect(pool.take() === own)
+    }
+
+    @Test func copyFromBufferCopiesPixelsAndMetadata() {
+        let a = FrameBuffer(width: 2, height: 1)
+        a.bgra = [1, 2, 3, 4, 5, 6, 7, 8]
+        a.frameID = 7
+        a.captureNs = 99
+        let b = FrameBuffer(width: 2, height: 1)
+        b.copy(from: a)
+        #expect(b.bgra == a.bgra)
+        #expect(b.frameID == 7)
+        #expect(b.captureNs == 99)
+    }
 }
 
 @Suite struct PreprocessTests {
