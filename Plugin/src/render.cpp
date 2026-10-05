@@ -66,12 +66,15 @@ void renderer::destroy() {
     matte_ = nullptr;
     gs_texture_destroy(overlay_);
     overlay_ = nullptr;
-    for (auto &texrender : ring_) {
-        gs_texrender_destroy(texrender);
-        texrender = nullptr;
+    for (auto *ring : {&ring_, &lowres_ring_}) {
+        for (auto &texrender : *ring) {
+            gs_texrender_destroy(texrender);
+            texrender = nullptr;
+        }
     }
     ring_ids_.clear();
     current_ = nullptr;
+    current_lowres_ = nullptr;
     gs_texrender_destroy(work_);
     work_ = nullptr;
     gs_texrender_destroy(full_);
@@ -106,30 +109,44 @@ bool renderer::capture(obs_source_t *filter, ma2_context_t context, const render
 
     frame_id_++;
     gs_texrender_t *into = full_;
+    gs_texrender_t *lowres = work_;
     if (params.alignment == alignment_mode::aligned) {
-        into = ring_texrender(ring_ids_.push(frame_id_, now_ns));
-        if (!into)
-            into = full_;
+        const size_t slot = ring_ids_.push(frame_id_, now_ns);
+        if (ensure_ring_slot(slot)) {
+            into = ring_[slot];
+            lowres = lowres_ring_[slot];
+        }
     }
     if (!render_target(filter, into)) {
         current_ = nullptr;
+        current_lowres_ = nullptr;
         return false;
     }
     current_ = into;
-    gs_texture_t *source = gs_texrender_get_texture(current_);
-    if (params.gpu_downscale) {
-        downscale(source);
-        stage_and_submit(context, now_ns);
-    } else {
-        submit_full_resolution(context, now_ns);
+    current_lowres_ = lowres;
+
+    // Staged frames from the other path would reach the worker out of order.
+    if (params.gpu_downscale != staged_gpu_downscale_) {
+        for (auto &slot : stages_)
+            slot.valid = false;
+        staged_gpu_downscale_ = params.gpu_downscale;
     }
+    // The downscale always runs: bilateral refinement uses it as its guide
+    // even when the worker gets the full frame.
+    downscale(gs_texrender_get_texture(current_), current_lowres_);
+    if (params.gpu_downscale)
+        stage_and_submit(context, gs_texrender_get_texture(current_lowres_), now_ns);
+    else
+        submit_full_resolution(context, now_ns);
     return true;
 }
 
-gs_texrender_t *renderer::ring_texrender(size_t slot) {
+bool renderer::ensure_ring_slot(size_t slot) {
     if (!ring_[slot])
         ring_[slot] = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
-    return ring_[slot];
+    if (!lowres_ring_[slot])
+        lowres_ring_[slot] = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
+    return ring_[slot] && lowres_ring_[slot];
 }
 
 // Same setup libobs uses in obs_source_process_filter_begin for an async
@@ -160,11 +177,11 @@ bool renderer::render_target(obs_source_t *filter, gs_texrender_t *into) {
     return true;
 }
 
-void renderer::downscale(gs_texture_t *source) {
+void renderer::downscale(gs_texture_t *source, gs_texrender_t *into) {
     if (!source)
         return;
-    gs_texrender_reset(work_);
-    if (!gs_texrender_begin(work_, working_width_, working_height_))
+    gs_texrender_reset(into);
+    if (!gs_texrender_begin(into, working_width_, working_height_))
         return;
     // Stage the bytes as stored, without sRGB decoding: the model was trained
     // on ordinary camera pixels.
@@ -189,11 +206,10 @@ void renderer::downscale(gs_texture_t *source) {
 
     gs_blend_state_pop();
     gs_enable_framebuffer_srgb(previous_srgb);
-    gs_texrender_end(work_);
+    gs_texrender_end(into);
 }
 
-void renderer::stage_and_submit(ma2_context_t context, uint64_t now_ns) {
-    gs_texture_t *texture = gs_texrender_get_texture(work_);
+void renderer::stage_and_submit(ma2_context_t context, gs_texture_t *texture, uint64_t now_ns) {
     if (!texture)
         return;
     stage_slot &current = stages_[stage_index_];
@@ -294,11 +310,13 @@ void renderer::clear_matte() {
 
 float renderer::draw(obs_source_t *filter, const render_params &params, uint64_t now_ns) {
     gs_texture_t *frame = current_ ? gs_texrender_get_texture(current_) : nullptr;
+    gs_texture_t *lowres = current_lowres_ ? gs_texrender_get_texture(current_lowres_) : nullptr;
     float latency_ms = 0.0f;
     if (params.alignment == alignment_mode::aligned && !ring_ids_.empty()) {
         const alignment_choice choice = choose_aligned(ring_ids_, matte_frame_id_, now_ns);
-        if (ring_[choice.slot]) {
+        if (ring_[choice.slot] && lowres_ring_[choice.slot]) {
             frame = gs_texrender_get_texture(ring_[choice.slot]);
+            lowres = gs_texrender_get_texture(lowres_ring_[choice.slot]);
             latency_ms = static_cast<float>(choice.latency_ns) / 1.0e6f;
         }
     }
@@ -319,7 +337,7 @@ float renderer::draw(obs_source_t *filter, const render_params &params, uint64_t
     }
     const bool previous_linear = gs_set_linear_srgb(true);
     const bool linear_srgb = gs_get_linear_srgb();
-    draw_texture(frame, technique, params.refinement, linear_srgb);
+    draw_texture(frame, lowres, technique, params.refinement, linear_srgb);
     gs_set_linear_srgb(previous_linear);
     return latency_ms;
 }
@@ -399,8 +417,9 @@ gs_texture_t *renderer::guided_coefficients(gs_texture_t *frame, bool linear_srg
 
 // Mirrors render_filter_tex in libobs so the output matches what
 // obs_source_process_filter_end would produce for an OBS_SOURCE_SRGB filter.
-void renderer::draw_texture(gs_texture_t *texture, const char *technique_name,
-                            refinement_mode refinement, bool linear_srgb) {
+void renderer::draw_texture(gs_texture_t *texture, gs_texture_t *lowres_texture,
+                            const char *technique_name, refinement_mode refinement,
+                            bool linear_srgb) {
     gs_texture_t *coefficients = nullptr;
     if (refinement == refinement_mode::guided) {
         coefficients = guided_coefficients(texture, linear_srgb);
@@ -413,7 +432,6 @@ void renderer::draw_texture(gs_texture_t *texture, const char *technique_name,
 
     gs_eparam_t *image = gs_effect_get_param_by_name(composite_effect_, "image");
     gs_eparam_t *lowres = gs_effect_get_param_by_name(composite_effect_, "lowres");
-    gs_texture_t *lowres_texture = gs_texrender_get_texture(work_);
     if (linear_srgb) {
         gs_effect_set_texture_srgb(image, texture);
         gs_effect_set_texture_srgb(lowres, lowres_texture);

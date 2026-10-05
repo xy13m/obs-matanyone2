@@ -38,10 +38,11 @@ class renderer {
     bool init(uint32_t working_width, uint32_t working_height);
     void destroy();
 
-    // Renders the filter target into the full-resolution texrender, downscales
-    // it into the working-resolution texrender, stages that copy and submits
-    // the frame staged two calls ago to the worker. Returns false when the
-    // target has no size yet.
+    // Renders the filter target into the full-resolution texrender and
+    // downscales it into the working-resolution texrender, which also guides
+    // the bilateral refinement. With GPU downscale it stages that copy and
+    // submits the frame staged two calls ago to the worker; without it the
+    // full frame is submitted. Returns false when the target has no size yet.
     bool capture(obs_source_t *filter, ma2_context_t context, const render_params &params,
                  uint64_t now_ns);
 
@@ -66,12 +67,13 @@ class renderer {
 
   private:
     bool render_target(obs_source_t *filter, gs_texrender_t *into);
-    void downscale(gs_texture_t *source);
-    gs_texrender_t *ring_texrender(size_t slot);
-    void stage_and_submit(ma2_context_t context, uint64_t now_ns);
+    void downscale(gs_texture_t *source, gs_texrender_t *into);
+    // Creates both texrenders of an aligned-mode ring slot on first use.
+    bool ensure_ring_slot(size_t slot);
+    void stage_and_submit(ma2_context_t context, gs_texture_t *texture, uint64_t now_ns);
     void submit_full_resolution(ma2_context_t context, uint64_t now_ns);
-    void draw_texture(gs_texture_t *texture, const char *technique, refinement_mode refinement,
-                      bool linear_srgb);
+    void draw_texture(gs_texture_t *texture, gs_texture_t *lowres, const char *technique,
+                      refinement_mode refinement, bool linear_srgb);
     // Runs the guided filter passes at half resolution; returns the (a, b)
     // coefficient texture or nullptr when the passes could not run.
     gs_texture_t *guided_coefficients(gs_texture_t *frame, bool linear_srgb);
@@ -84,9 +86,11 @@ class renderer {
     uint32_t frame_height_ = 0;
     uint64_t frame_id_ = 0;
     uint64_t last_frame_time_ = 0;
-    // The texrender holding the frame captured this call: full_ in lowest
-    // latency mode, a ring slot in aligned mode.
+    // The texrenders holding the frame captured this call and its downscaled
+    // copy: full_ and work_ in lowest latency mode, a ring slot in aligned
+    // mode.
     gs_texrender_t *current_ = nullptr;
+    gs_texrender_t *current_lowres_ = nullptr;
     uint64_t matte_frame_id_ = 0;
 
     gs_effect_t *downscale_effect_ = nullptr;
@@ -101,10 +105,12 @@ class renderer {
     gs_texrender_t *work_ = nullptr;
     gs_texture_t *matte_ = nullptr;
     bool has_matte_ = false;
-    // Aligned mode keeps recent full-resolution frames so each matte can be
-    // composited with the frame it was computed from. Created on first use.
+    // Aligned mode keeps recent frames at full and working resolution so each
+    // matte is composited with, and refined against, the frame it was
+    // computed from. Created on first use.
     static constexpr size_t ring_size = 6;
     std::array<gs_texrender_t *, ring_size> ring_{};
+    std::array<gs_texrender_t *, ring_size> lowres_ring_{};
     frame_ring<ring_size> ring_ids_;
     gs_texture_t *overlay_ = nullptr;
     uint32_t overlay_width_ = 0;
@@ -120,6 +126,9 @@ class renderer {
     };
     std::array<stage_slot, 3> stages_{};
     size_t stage_index_ = 0;
+    // GPU downscale setting of the previous capture; a change drops the
+    // staged frames so none of them is submitted late.
+    bool staged_gpu_downscale_ = true;
     // Full-resolution staging is only used when GPU downscale is off.
     gs_stagesurf_t *full_stage_ = nullptr;
 };
