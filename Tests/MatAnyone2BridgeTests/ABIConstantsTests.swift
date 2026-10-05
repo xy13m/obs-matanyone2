@@ -39,6 +39,8 @@ struct ABIConstantsTests {
         #expect(computeUnits(Int32(MA2_COMPUTE_CPU_ANE.rawValue)) == .cpuAndNeuralEngine)
         #expect(computeUnits(Int32(MA2_COMPUTE_CPU_GPU.rawValue)) == .cpuAndGPU)
         #expect(computeUnits(Int32(MA2_COMPUTE_ALL.rawValue)) == .all)
+        // Unknown codes fall back to the default, CPU + Neural Engine.
+        #expect(computeUnits(99) == .cpuAndNeuralEngine)
     }
 
     @Test func requestConstantsMapToWorkerRequests() {

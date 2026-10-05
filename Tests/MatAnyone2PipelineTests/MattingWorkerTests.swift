@@ -144,10 +144,12 @@ private struct Harness {
     /// A frame with the given fill and an optional brighter rectangle. `scale`
     /// multiplies the 32x16 working size, like a renderer that skips its GPU
     /// downscale; the rectangle is given in working-size pixels.
+    /// Returns false when the worker dropped the frame because no buffer was free.
+    @discardableResult
     func submit(
         id: UInt64, fill: UInt8 = 40, rect: (x: Int, y: Int, w: Int, h: Int)? = nil,
         scale: Int = 1
-    ) {
+    ) -> Bool {
         let width = 32 * scale
         let height = 16 * scale
         var bgra = [UInt8](repeating: fill, count: width * height * 4)
@@ -162,8 +164,8 @@ private struct Harness {
                 }
             }
         }
-        bgra.withUnsafeBufferPointer {
-            _ = worker.submit(
+        return bgra.withUnsafeBufferPointer {
+            worker.submit(
                 bgra: $0.baseAddress!, stride: width * 4, width: width, height: height, frameID: id,
                 captureNs: clock.nowNs())
         }
@@ -180,7 +182,9 @@ private struct Harness {
         id: UInt64, fill: UInt8 = 40, rect: (x: Int, y: Int, w: Int, h: Int)? = nil,
         scale: Int = 1
     ) -> Bool {
-        submit(id: id, fill: fill, rect: rect, scale: scale)
+        // A frame the pool had no buffer for never reaches the worker; fail
+        // now instead of after the wait times out.
+        guard submit(id: id, fill: fill, rect: rect, scale: scale) else { return false }
         return wait { worker.lastHandledFrameID == id }
     }
 

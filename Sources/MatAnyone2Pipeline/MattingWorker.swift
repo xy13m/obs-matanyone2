@@ -269,6 +269,9 @@ public final class MattingWorker: @unchecked Sendable {
             return false
         }
         let frame = pending
+        // Read now: process() may hand the buffer back to the pool, where the
+        // render thread can overwrite it.
+        let frameID = frame?.frameID
         pending = nil
         let queued = requests
         requests.removeAll()
@@ -284,6 +287,13 @@ public final class MattingWorker: @unchecked Sendable {
         }
         tick(options: currentOptions)
         publishStatus()
+        if let frameID {
+            // After publishStatus, so a test that waits for this ID also sees
+            // the status the frame produced.
+            condition.lock()
+            handledFrameID = frameID
+            condition.unlock()
+        }
         return true
     }
 
@@ -501,11 +511,6 @@ public final class MattingWorker: @unchecked Sendable {
     // MARK: Frames
 
     private func process(_ frame: FrameBuffer, options: WorkerOptions) {
-        defer {
-            condition.lock()
-            handledFrameID = frame.frameID
-            condition.unlock()
-        }
         if lastFrame == nil {
             log("first frame received: \(frame.width)x\(frame.height)")
         }
