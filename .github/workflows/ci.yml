@@ -38,7 +38,7 @@ jobs:
 
       - name: Record the Xcode version
         id: xcode
-        run: echo "version=$(xcodebuild -version | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(xcodebuild -version | paste -sd ' ' -)" >> "$GITHUB_OUTPUT"
 
       # SwiftPM checkouts and compiled dependencies. With Xcode 27 the build
       # products live in .build/out. A stale cache is still useful, so fall
