@@ -29,15 +29,21 @@ export_project="$root_dir/tools/export"
 export_dir="$root_dir/.build/export-${width}x${height}"
 models_dir="$root_dir/.build/models/${width}x${height}/MatAnyone"
 
+# A failed hash inside the stamp must stop the script, not hash empty input.
+shopt -s inherit_errexit
+
 # The inputs that decide what the export produces: the pinned upstream commit,
-# the Python environment, this script and the fork's export scripts.
+# the Python environment, this script and the fork's export scripts. Editing
+# this script, even a comment, therefore triggers one re-export.
 export_stamp() {
-    printf 'upstream_rev=%s\n' "$upstream_rev"
-    printf 'uv_lock=%s\n' "$(shasum -a 256 <"$export_project/uv.lock" | cut -d' ' -f1)"
-    printf 'pyproject=%s\n' "$(shasum -a 256 <"$export_project/pyproject.toml" | cut -d' ' -f1)"
-    printf 'export_script=%s\n' "$(shasum -a 256 <"${BASH_SOURCE[0]}" | cut -d' ' -f1)"
-    printf 'kit_export=%s\n' "$(cat "$kit_scripts/export.py" "$kit_scripts/coreml_prod_op.py" |
-        shasum -a 256 | cut -d' ' -f1)"
+    local uv_lock pyproject script kit
+    uv_lock="$(shasum -a 256 <"$export_project/uv.lock" | cut -d' ' -f1)"
+    pyproject="$(shasum -a 256 <"$export_project/pyproject.toml" | cut -d' ' -f1)"
+    script="$(shasum -a 256 <"${BASH_SOURCE[0]}" | cut -d' ' -f1)"
+    kit="$(cat "$kit_scripts/export.py" "$kit_scripts/coreml_prod_op.py" | shasum -a 256 |
+        cut -d' ' -f1)"
+    printf 'upstream_rev=%s\nuv_lock=%s\npyproject=%s\nexport_script=%s\nkit_export=%s\n' \
+        "$upstream_rev" "$uv_lock" "$pyproject" "$script" "$kit"
 }
 
 if ((width % 16 != 0 || height % 16 != 0 || width <= 0 || height <= 0)); then
@@ -53,18 +59,26 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
+stamp="$(export_stamp)"
 if [[ "${MA2_FORCE_EXPORT:-0}" == "1" ]]; then
     rm -rf "$export_dir" "$models_dir"
 fi
 if [[ -f "$models_dir/manifest.json" ]]; then
     if [[ ! -f "$models_dir/export-stamp" ]]; then
         printf 'Models at %s have no export-stamp; exporting again.\n' "$models_dir"
-    elif [[ "$(export_stamp)" != "$(<"$models_dir/export-stamp")" ]]; then
+    elif [[ "$stamp" != "$(<"$models_dir/export-stamp")" ]]; then
         printf 'Export inputs changed since %s was built; exporting again.\n' "$models_dir"
     else
         printf 'Models for %sx%s already exported at %s\n' "$width" "$height" "$models_dir"
         exit 0
     fi
+fi
+# export.py skips any .mlpackage already in the workspace so an interrupted
+# export can resume. Keep the workspace only when it was made from the same
+# inputs; otherwise the old packages would be compiled and stamped as new.
+if [[ -d "$export_dir" && "$stamp" != "$(cat "$export_dir/export-stamp" 2>/dev/null || true)" ]]; then
+    printf 'Discarding %s: it was made from other inputs.\n' "$export_dir"
+    rm -rf "$export_dir"
 fi
 
 # Upstream MatAnyone2 source at the pinned commit.
@@ -109,6 +123,7 @@ PY
 # The fork's export script takes the working resolution from the environment
 # and writes models/ next to itself, so it runs from a scratch copy.
 mkdir -p "$export_dir"
+printf '%s\n' "$stamp" >"$export_dir/export-stamp"
 cp "$kit_scripts/export.py" "$kit_scripts/coreml_prod_op.py" "$export_dir/"
 chmod u+w "$export_dir"/*.py
 (
@@ -128,7 +143,7 @@ cp "$upstream_dir/LICENSE.txt" "$partial_dir/LICENSE.txt"
 for model in encoder uncert readout decoder maskencoder objsummary; do
     xcrun coremlcompiler compile "$export_dir/models/$model.mlpackage" "$partial_dir/"
 done
-export_stamp >"$partial_dir/export-stamp"
+printf '%s\n' "$stamp" >"$partial_dir/export-stamp"
 rm -rf "$models_dir"
 mv "$partial_dir" "$models_dir"
 
