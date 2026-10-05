@@ -66,7 +66,7 @@ private func context(_ pointer: UnsafeMutableRawPointer?) -> BridgeContext? {
     pointer.map { Unmanaged<BridgeContext>.fromOpaque($0).takeUnretainedValue() }
 }
 
-private func computeUnits(_ raw: Int32) -> MLComputeUnits {
+func computeUnits(_ raw: Int32) -> MLComputeUnits {
     switch raw {
     case Int32(MA2_COMPUTE_CPU_GPU.rawValue): return .cpuAndGPU
     case Int32(MA2_COMPUTE_ALL.rawValue): return .all
@@ -187,17 +187,19 @@ public func ma2PollMatte(
 
 @_cdecl("ma2_request")
 public func ma2Request(_ pointer: UnsafeMutableRawPointer?, _ request: ma2_request_kind) {
-    guard let context = context(pointer) else { return }
-    let mapped: WorkerRequest
-    switch request {
-    case MA2_REQUEST_CAPTURE_CLEAN: mapped = .captureClean
-    case MA2_REQUEST_CAPTURE_PROPS: mapped = .captureProps
-    case MA2_REQUEST_SEED: mapped = .seed
-    case MA2_REQUEST_RESEED: mapped = .reseed
-    case MA2_REQUEST_CLEAR: mapped = .clear
-    default: return
-    }
+    guard let context = context(pointer), let mapped = workerRequest(request) else { return }
     context.worker.request(mapped)
+}
+
+func workerRequest(_ request: ma2_request_kind) -> WorkerRequest? {
+    switch request {
+    case MA2_REQUEST_CAPTURE_CLEAN: return .captureClean
+    case MA2_REQUEST_CAPTURE_PROPS: return .captureProps
+    case MA2_REQUEST_SEED: return .seed
+    case MA2_REQUEST_RESEED: return .reseed
+    case MA2_REQUEST_CLEAR: return .clear
+    default: return nil
+    }
 }
 
 @_cdecl("ma2_get_status")
