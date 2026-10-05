@@ -56,11 +56,23 @@ def request(ws, name, data=None, rid="1"):
             return d.get("responseData", {})
 
 
+ARG_COUNTS = {"status": 0, "press": 1, "set": 2, "screenshot": 1, "source-screenshot": 1}
+
+
+def usage_error(message):
+    print(message, file=sys.stderr)
+    print(__doc__, file=sys.stderr)
+    sys.exit(2)
+
+
 def main():
     if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(2)
+        usage_error("missing command")
     cmd = sys.argv[1]
+    if cmd not in ARG_COUNTS:
+        usage_error(f"unknown command: {cmd}")
+    if len(sys.argv) - 2 < ARG_COUNTS[cmd]:
+        usage_error(f"{cmd}: missing argument")
     ws = connect()
     if cmd == "status":
         s = request(ws, "GetSourceFilter", {"sourceName": SOURCE, "filterName": FILTER})
