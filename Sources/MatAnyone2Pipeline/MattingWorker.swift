@@ -37,6 +37,7 @@ public final class MattingWorker: @unchecked Sendable {
     private var snapshot: StatusSnapshot
     private var version: UInt32 = 0
     private var droppedFrames = 0
+    private var handledFrameID: UInt64?
     // Only while tracking; earlier phases keep just the newest frame by design.
     private var countDrops = false
     private var displayLatencyMs: Double = 0
@@ -216,6 +217,16 @@ public final class MattingWorker: @unchecked Sendable {
         overlayStatusLine = showStatusLine
         guard overlayVersion != lastVersion, !overlayBytes.isEmpty else { return nil }
         return (overlayBytes, overlayVersion)
+    }
+
+    /// ID of the newest frame the worker has finished handling, in any phase.
+    /// The mailbox keeps only the newest frame, so a test that needs to know a
+    /// submitted frame was seen (not replaced, not still queued) waits for its
+    /// ID here. Nothing in production reads it.
+    var lastHandledFrameID: UInt64? {
+        condition.lock()
+        defer { condition.unlock() }
+        return handledFrameID
     }
 
     public func status() -> StatusSnapshot {
@@ -489,6 +500,11 @@ public final class MattingWorker: @unchecked Sendable {
     // MARK: Frames
 
     private func process(_ frame: FrameBuffer, options: WorkerOptions) {
+        defer {
+            condition.lock()
+            handledFrameID = frame.frameID
+            condition.unlock()
+        }
         if lastFrame == nil {
             log("first frame received: \(frame.width)x\(frame.height)")
         }
