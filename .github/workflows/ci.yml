@@ -20,8 +20,6 @@ env:
   # Keep in step with the OBS version installed on the development machine
   # (scripts/fetch-obs-sdk.sh reads the same variable).
   OBS_VERSION: 32.2.2
-  # Keep in step with simde_tag in scripts/fetch-obs-sdk.sh.
-  SIMDE_TAG: v0.8.2
 
 jobs:
   test:
@@ -40,27 +38,30 @@ jobs:
         id: xcode
         run: echo "version=$(xcodebuild -version | paste -sd ' ' -)" >> "$GITHUB_OUTPUT"
 
-      # SwiftPM checkouts and compiled dependencies. With Xcode 27 the build
-      # products live in .build/out. A stale cache is still useful, so fall
-      # back to the newest entry for the same Xcode.
-      - name: Cache SwiftPM build
-        uses: actions/cache@v6
+      # SwiftPM checkouts and compiled dependencies (with Xcode 27 the build
+      # products live in .build/out). Every run restores the newest entry for
+      # this Xcode; only pushes to main save one, keyed by commit, so the
+      # cache follows main instead of staying at the first build that
+      # created a key. Pull requests can read caches saved on main.
+      - name: Restore SwiftPM build
+        uses: actions/cache/restore@v6
         with:
           path: |
             .build
             !.build/obs-studio
             !.build/simde
-          key: swiftpm-${{ runner.os }}-${{ steps.xcode.outputs.version }}-${{ hashFiles('Package.resolved') }}
+          key: swiftpm-${{ runner.os }}-${{ steps.xcode.outputs.version }}-${{ github.sha }}
           restore-keys: |
             swiftpm-${{ runner.os }}-${{ steps.xcode.outputs.version }}-
 
+      # Keyed on the fetch script too, because it pins the SIMDe tag.
       - name: Cache OBS and SIMDe headers
         uses: actions/cache@v6
         with:
           path: |
             .build/obs-studio
             .build/simde
-          key: obs-sdk-${{ env.OBS_VERSION }}-simde-${{ env.SIMDE_TAG }}
+          key: obs-sdk-${{ env.OBS_VERSION }}-${{ hashFiles('scripts/fetch-obs-sdk.sh') }}
 
       - name: Check formatting
         run: scripts/check-format.sh
@@ -79,3 +80,13 @@ jobs:
 
       - name: Frame ring tests (C++)
         run: swift run FrameRingTests
+
+      - name: Save SwiftPM build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            .build
+            !.build/obs-studio
+            !.build/simde
+          key: swiftpm-${{ runner.os }}-${{ steps.xcode.outputs.version }}-${{ github.sha }}
