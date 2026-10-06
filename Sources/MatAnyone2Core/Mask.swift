@@ -57,7 +57,6 @@ public struct Mask: Equatable, Sendable {
         return out
     }
 
-    /// 255 where the pixel is at least `threshold`, 0 elsewhere.
     /// Pixels set in both masks.
     public func intersecting(_ other: Mask) -> Mask {
         precondition(width == other.width && height == other.height)
@@ -82,6 +81,7 @@ public struct Mask: Equatable, Sendable {
         return uni == 0 ? 0 : Double(inter) / Double(uni)
     }
 
+    /// 255 where the pixel is at least `threshold`, 0 elsewhere.
     public func thresholded(_ threshold: UInt8) -> Mask {
         var out = self
         for i in out.pixels.indices {

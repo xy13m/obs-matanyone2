@@ -126,8 +126,10 @@ Because every seed starts from the props plate, a re-seed also recovers a
 prop the tracker lost, as long as the prop is back where the plate shows
 it. What it cannot fix is background that differs from the clean plate
 and got tracked as a prop, such as a shadow the person casts on the wall.
-Press **Seed tracker now** with the props in their calibrated positions to
-start from the calibration mask again.
+Press **Seed tracker now** to drop what the tracker has picked up and start
+again from the props as they stand now: the regions that differ from the
+clean plate and mostly overlap the calibrated mask. When nothing matches,
+the seed uses the calibrated mask.
 
 The seed frame stays in the tracker's permanent memory. A prop that leaves
 the frame and comes back to roughly the same place is usually picked up
@@ -162,7 +164,7 @@ without the panel or triggered through obs-websocket.
 |---|---|---|
 | Capture clean plate | button | Countdown, then average frames of the empty room. |
 | Capture props plate | button | Countdown, then average frames with the props in place. |
-| Seed tracker now | button | Person from Vision plus the calibrated props mask. |
+| Seed tracker now | button | Person from Vision plus the props found in the current frame, falling back to the calibrated props mask. |
 | Re-seed now | button | Person from Vision plus the props as the tracker sees them now. |
 | Clear calibration | button | Delete the plates and the mask from disk; stop tracking. |
 | Countdown | 3 s | Delay between pressing a capture button and the capture. |
@@ -200,10 +202,11 @@ without the panel or triggered through obs-websocket.
 
 ## Performance
 
-Measured on a Mac mini M4 Pro, macOS 27.0, Xcode 26.6, CPU + Neural Engine,
-release build, with the Core ML integration test (`MA2_INTEGRATION=1 swift test -c release
---filter CoreMLEngineIntegrationTests`, synthetic frames, twelve tracking
-steps after the seed):
+Measured on a Mac mini M4 Pro, macOS 27.0, CPU + Neural Engine, release
+build made with Xcode 26.6 (before the move to Xcode 27), with the Core ML
+integration test (`MA2_INTEGRATION=1 swift test -c release --filter
+CoreMLEngineIntegrationTests`, synthetic frames, twelve tracking steps after
+the seed):
 
 | Working resolution | Seed (10 warm-up steps) | Tracking step p50 | Verdict |
 |---|---|---|---|
@@ -264,8 +267,8 @@ camera is in PAL/50p.
   minimum size. Lower the threshold, or check that the props were out of the
   frame for the clean plate and in place for the props plate.
 - **A prop disappears after a while.** Press Re-seed now (props stay where
-  they are) or Seed tracker now (props back in calibrated positions). Enable
-  the periodic re-seed if it keeps happening.
+  they are) or Seed tracker now (props found again against the clean
+  plate). Enable the periodic re-seed if it keeps happening.
 - **The chair back vanishes when you lean.** Before two-frame seeding the
   tracker had never seen the chair without you in front of it. Make sure
   the props plate was captured with the chair in place and press Seed
@@ -318,6 +321,7 @@ MA2_INTEGRATION=1 swift test -c release --filter CoreMLEngineIntegrationTests   
 swift run FrameRingTests        # C++ tests for the alignment ring
 scripts/check-format.sh         # clang-format and swift-format, read-only
 scripts/check-format.sh --fix   # rewrite files in place
+scripts/check-plugin-syntax.sh  # compile-check the OBS module (needs scripts/fetch-obs-sdk.sh)
 scripts/obsctl.py status        # drive the filter over obs-websocket during manual tests
 ```
 
