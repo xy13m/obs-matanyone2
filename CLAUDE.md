@@ -9,7 +9,7 @@ the Neural Engine through Core ML and keeps the person plus the physical props
 ```sh
 swift build                    # Swift targets (core, pipeline, bridge, benchmark, C++ ring tests)
 swift test                     # unit tests; no OBS, camera or Neural Engine needed
-swift test -c release --filter CoreMLEngineIntegrationTests   # real models when exported
+MA2_INTEGRATION=1 swift test -c release --filter CoreMLEngineIntegrationTests   # real models when exported
 swift run FrameRingTests       # C++ tests for Plugin/src/frame_ring.hpp
 scripts/check-format.sh        # clang-format + swift-format, read-only
 scripts/check-format.sh --fix  # rewrite in place

@@ -25,8 +25,9 @@ private final class FixedSegmenter: PersonSegmenter, @unchecked Sendable {
     func personMask(in frame: FrameBuffer) -> Mask? { mask }
 }
 
-/// Runs the real Core ML models when they have been exported locally.
-/// Skipped in CI, where no models exist and there is no Neural Engine.
+/// Runs the real Core ML models when they have been exported locally and
+/// `MA2_INTEGRATION=1` is set. Skipped otherwise, and in CI, where no models
+/// exist and there is no Neural Engine.
 @Suite(.serialized) struct CoreMLEngineIntegrationTests {
     static let modelsDirectory: URL = {
         let env = ProcessInfo.processInfo.environment["MA2_MODELS_DIR"]
@@ -37,6 +38,13 @@ private final class FixedSegmenter: PersonSegmenter, @unchecked Sendable {
             .appendingPathComponent(".build/models/512x288/MatAnyone").path
         return URL(fileURLWithPath: path, isDirectory: true)
     }()
+
+    /// Opt in with `MA2_INTEGRATION=1`: loading the models and running them
+    /// takes about 40 s, which plain `swift test` should not pay just because
+    /// the models happen to be exported.
+    static var enabled: Bool {
+        ProcessInfo.processInfo.environment["MA2_INTEGRATION"] == "1" && modelsExist
+    }
 
     static var modelsExist: Bool {
         FileManager.default.fileExists(
@@ -64,7 +72,7 @@ private final class FixedSegmenter: PersonSegmenter, @unchecked Sendable {
         return (image, mask)
     }
 
-    @Test(.enabled(if: modelsExist)) func seedsResetsAndTracksOnTheNeuralEngine() throws {
+    @Test(.enabled(if: enabled)) func seedsResetsAndTracksOnTheNeuralEngine() throws {
         let engine = try CoreMLMattingEngine(
             modelsDirectory: Self.modelsDirectory, computeUnits: .cpuAndNeuralEngine)
         let w = engine.workingWidth
@@ -128,7 +136,7 @@ private final class FixedSegmenter: PersonSegmenter, @unchecked Sendable {
     /// The worker thread runs for the life of the filter, so anything Core ML
     /// autoreleases per prediction must be drained per frame. A leak of a few
     /// MB per step crashed OBS after about a minute of tracking.
-    @Test(.enabled(if: modelsExist)) func workerReleasesPerFrameMemoryWhileTracking() throws {
+    @Test(.enabled(if: enabled)) func workerReleasesPerFrameMemoryWhileTracking() throws {
         let manifest = try ModelManifest(
             contentsOf: Self.modelsDirectory.appendingPathComponent("manifest.json"))
         let w = manifest.workingWidth

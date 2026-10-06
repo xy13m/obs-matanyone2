@@ -53,6 +53,14 @@ let package = Package(
         ),
         .testTarget(name: "MatAnyone2CoreTests", dependencies: ["MatAnyone2Core"]),
         .testTarget(name: "MatAnyone2PipelineTests", dependencies: ["MatAnyone2Pipeline"]),
+        // Checks that the Swift enums and mappings agree with the values in the
+        // C header, which the OBS module compiles against.
+        .testTarget(
+            name: "MatAnyone2BridgeTests",
+            dependencies: [
+                "MatAnyone2Bridge", "MatAnyone2BridgeABI", "MatAnyone2Core", "MatAnyone2Pipeline",
+            ]
+        ),
     ],
     swiftLanguageModes: [.v6],
     cxxLanguageStandard: .cxx20

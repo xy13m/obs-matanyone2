@@ -204,7 +204,7 @@ without the panel or triggered through obs-websocket.
 
 Measured on a Mac mini M4 Pro, macOS 27.0, CPU + Neural Engine, release
 build made with Xcode 26.6 (before the move to Xcode 27), with the Core ML
-integration test (`swift test -c release --filter
+integration test (`MA2_INTEGRATION=1 swift test -c release --filter
 CoreMLEngineIntegrationTests`, synthetic frames, twelve tracking steps after
 the seed):
 
@@ -317,7 +317,7 @@ on the real models with a synthetic moving object (integration test).
 ```sh
 swift build
 swift test                      # unit tests; no OBS, camera or Neural Engine needed
-swift test -c release --filter CoreMLEngineIntegrationTests   # real models, when exported
+MA2_INTEGRATION=1 swift test -c release --filter CoreMLEngineIntegrationTests   # real models, when exported
 swift run FrameRingTests        # C++ tests for the alignment ring
 scripts/check-format.sh         # clang-format and swift-format, read-only
 scripts/check-format.sh --fix   # rewrite files in place
@@ -327,7 +327,8 @@ scripts/obsctl.py status        # drive the filter over obs-websocket during man
 
 The unit tests run without OBS, a camera or the Neural Engine, so they also
 run in GitHub Actions on a macOS runner. The Core ML integration test loads
-the exported models when they exist and is skipped otherwise.
+the exported models when they exist and `MA2_INTEGRATION=1` is set, and is
+skipped otherwise.
 
 MatAnyone2Kit comes from a fork at <https://github.com/xy13m/MatAnyone2Kit>
 (branch `obs-matanyone2`), pinned by revision in `Package.swift`. The fork
