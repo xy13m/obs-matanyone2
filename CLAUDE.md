@@ -15,6 +15,7 @@ scripts/check-format.sh        # clang-format + swift-format, read-only
 scripts/check-format.sh --fix  # rewrite in place
 scripts/fetch-obs-sdk.sh       # libobs headers for the installed OBS version
 scripts/export-models.sh       # Core ML models; MA2_WORKING_WIDTH/HEIGHT select the resolution
+scripts/check-plugin-syntax.sh # -fsyntax-only compile of Plugin/src against the headers
 scripts/build-plugin.sh        # assemble and sign .build/plugin/obs-matanyone2-matting.plugin
 scripts/install-plugin.sh      # copy into ~/Library/Application Support/obs-studio/plugins
 scripts/setup-plugin.sh        # all of the above, idempotent; OBS must be closed

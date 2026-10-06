@@ -7,8 +7,20 @@ on:
 
 # The hosted macOS runners are Apple Silicon but cannot exercise the Neural
 # Engine, Core ML model loading or the capture card. This workflow only checks
-# formatting, builds the Swift targets and runs the OBS-free unit tests.
-# Everything involving inference is measured locally with the benchmark tool.
+# formatting, builds the Swift targets, runs the OBS-free unit tests and
+# syntax-checks the OBS module against the libobs headers (it cannot link
+# without OBS.app). Everything involving inference is measured locally with
+# the benchmark tool.
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in step with the OBS version installed on the development machine
+  # (scripts/fetch-obs-sdk.sh reads the same variable).
+  OBS_VERSION: 32.2.2
+
 jobs:
   test:
     runs-on: xcode-27
@@ -22,14 +34,43 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: Cache SwiftPM checkouts
+      - name: Record the Xcode version
+        id: xcode
+        run: echo "version=$(xcodebuild -version | paste -sd ' ' -)" >> "$GITHUB_OUTPUT"
+
+      # SwiftPM checkouts and compiled dependencies (with Xcode 27 the build
+      # products live in .build/out). Every run restores the newest entry for
+      # this Xcode; only pushes to main save one, keyed by commit, so the
+      # cache follows main instead of staying at the first build that
+      # created a key. Pull requests can read caches saved on main.
+      - name: Restore SwiftPM build
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            .build
+            !.build/obs-studio
+            !.build/simde
+          key: swiftpm-${{ runner.os }}-${{ steps.xcode.outputs.version }}-${{ github.sha }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ steps.xcode.outputs.version }}-
+
+      # Keyed on the fetch script too, because it pins the SIMDe tag.
+      - name: Cache OBS and SIMDe headers
         uses: actions/cache@v6
         with:
-          path: .build/checkouts
-          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          path: |
+            .build/obs-studio
+            .build/simde
+          key: obs-sdk-${{ env.OBS_VERSION }}-${{ hashFiles('scripts/fetch-obs-sdk.sh') }}
 
       - name: Check formatting
         run: scripts/check-format.sh
+
+      - name: Fetch OBS headers
+        run: scripts/fetch-obs-sdk.sh
+
+      - name: Check plugin syntax (C++)
+        run: scripts/check-plugin-syntax.sh
 
       - name: Build
         run: swift build
@@ -39,3 +80,13 @@ jobs:
 
       - name: Frame ring tests (C++)
         run: swift run FrameRingTests
+
+      - name: Save SwiftPM build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            .build
+            !.build/obs-studio
+            !.build/simde
+          key: swiftpm-${{ runner.os }}-${{ steps.xcode.outputs.version }}-${{ github.sha }}

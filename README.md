@@ -318,6 +318,7 @@ swift test -c release --filter CoreMLEngineIntegrationTests   # real models, whe
 swift run FrameRingTests        # C++ tests for the alignment ring
 scripts/check-format.sh         # clang-format and swift-format, read-only
 scripts/check-format.sh --fix   # rewrite files in place
+scripts/check-plugin-syntax.sh  # compile-check the OBS module (needs scripts/fetch-obs-sdk.sh)
 scripts/obsctl.py status        # drive the filter over obs-websocket during manual tests
 ```
 
