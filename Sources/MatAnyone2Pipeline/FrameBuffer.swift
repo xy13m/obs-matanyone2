@@ -30,14 +30,33 @@ public final class FrameBuffer: @unchecked Sendable {
             }
         }
     }
+
+    /// Copies pixels, frame ID and capture time from a buffer of the same size
+    /// without allocating.
+    public func copy(from other: FrameBuffer) {
+        precondition(
+            other.width == width && other.height == height, "FrameBuffer size mismatch")
+        let byteCount = other.bgra.count
+        other.bgra.withUnsafeBytes { src in
+            bgra.withUnsafeMutableBytes { dst in
+                dst.baseAddress!.copyMemory(from: src.baseAddress!, byteCount: byteCount)
+            }
+        }
+        frameID = other.frameID
+        captureNs = other.captureNs
+    }
 }
 
 /// Fixed-size pool so the render thread never allocates per frame.
 public final class FrameBufferPool: @unchecked Sendable {
     private let lock = NSLock()
+    private let width: Int
+    private let height: Int
     private var free: [FrameBuffer]
 
     public init(width: Int, height: Int, capacity: Int) {
+        self.width = width
+        self.height = height
         free = (0..<capacity).map { _ in FrameBuffer(width: width, height: height) }
     }
 
@@ -46,7 +65,11 @@ public final class FrameBufferPool: @unchecked Sendable {
         lock.withLock { free.popLast() }
     }
 
+    /// A buffer of another size is dropped: it belongs to a pool that was
+    /// replaced when the frame size changed, and handing it out again would
+    /// make a copy read past the end of a smaller source.
     public func give(_ buffer: FrameBuffer) {
+        guard buffer.width == width && buffer.height == height else { return }
         lock.withLock { free.append(buffer) }
     }
 }

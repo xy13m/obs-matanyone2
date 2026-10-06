@@ -25,6 +25,16 @@ import Testing
         pool.give(a!)
         #expect(pool.take() != nil)
     }
+
+    @Test func poolDropsBuffersOfAnotherSize() {
+        let pool = FrameBufferPool(width: 2, height: 2, capacity: 1)
+        let own = pool.take()!
+        #expect(pool.take() == nil)
+        pool.give(FrameBuffer(width: 4, height: 4))
+        #expect(pool.take() == nil)
+        pool.give(own)
+        #expect(pool.take() === own)
+    }
 }
 
 @Suite struct PreprocessTests {
