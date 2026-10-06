@@ -9,7 +9,10 @@
 #   MA2_FORCE_EXPORT=1                     discard a previous export first
 #
 # Output: .build/models/<W>x<H>/MatAnyone/ with manifest.json, six .mlmodelc
-# directories and the upstream LICENSE.txt.
+# directories, the upstream LICENSE.txt and export-stamp. The set is built in a
+# sibling .partial directory and moved into place last, so an interrupted run
+# never leaves something that looks complete. export-stamp records the inputs
+# of the export; a later run re-exports when they differ.
 #
 # The upstream MatAnyone2 commit and the Python package versions are pinned
 # (below and in tools/export/uv.lock) so the export is reproducible. The weights
@@ -26,6 +29,23 @@ export_project="$root_dir/tools/export"
 export_dir="$root_dir/.build/export-${width}x${height}"
 models_dir="$root_dir/.build/models/${width}x${height}/MatAnyone"
 
+# A failed hash inside the stamp must stop the script, not hash empty input.
+shopt -s inherit_errexit
+
+# The inputs that decide what the export produces: the pinned upstream commit,
+# the Python environment, this script and the fork's export scripts. Editing
+# this script, even a comment, therefore triggers one re-export.
+export_stamp() {
+    local uv_lock pyproject script kit
+    uv_lock="$(shasum -a 256 <"$export_project/uv.lock" | cut -d' ' -f1)"
+    pyproject="$(shasum -a 256 <"$export_project/pyproject.toml" | cut -d' ' -f1)"
+    script="$(shasum -a 256 <"${BASH_SOURCE[0]}" | cut -d' ' -f1)"
+    kit="$(cat "$kit_scripts/export.py" "$kit_scripts/coreml_prod_op.py" | shasum -a 256 |
+        cut -d' ' -f1)"
+    printf 'upstream_rev=%s\nuv_lock=%s\npyproject=%s\nexport_script=%s\nkit_export=%s\n' \
+        "$upstream_rev" "$uv_lock" "$pyproject" "$script" "$kit"
+}
+
 if ((width % 16 != 0 || height % 16 != 0 || width <= 0 || height <= 0)); then
     echo "Working resolution ${width}x${height} must be a positive multiple of 16." >&2
     exit 1
@@ -39,12 +59,26 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
+stamp="$(export_stamp)"
 if [[ "${MA2_FORCE_EXPORT:-0}" == "1" ]]; then
     rm -rf "$export_dir" "$models_dir"
 fi
 if [[ -f "$models_dir/manifest.json" ]]; then
-    printf 'Models for %sx%s already exported at %s\n' "$width" "$height" "$models_dir"
-    exit 0
+    if [[ ! -f "$models_dir/export-stamp" ]]; then
+        printf 'Models at %s have no export-stamp; exporting again.\n' "$models_dir"
+    elif [[ "$stamp" != "$(<"$models_dir/export-stamp")" ]]; then
+        printf 'Export inputs changed since %s was built; exporting again.\n' "$models_dir"
+    else
+        printf 'Models for %sx%s already exported at %s\n' "$width" "$height" "$models_dir"
+        exit 0
+    fi
+fi
+# export.py skips any .mlpackage already in the workspace so an interrupted
+# export can resume. Keep the workspace only when it was made from the same
+# inputs; otherwise the old packages would be compiled and stamped as new.
+if [[ -d "$export_dir" && "$stamp" != "$(cat "$export_dir/export-stamp" 2>/dev/null || true)" ]]; then
+    printf 'Discarding %s: it was made from other inputs.\n' "$export_dir"
+    rm -rf "$export_dir"
 fi
 
 # Upstream MatAnyone2 source at the pinned commit.
@@ -89,6 +123,7 @@ PY
 # The fork's export script takes the working resolution from the environment
 # and writes models/ next to itself, so it runs from a scratch copy.
 mkdir -p "$export_dir"
+printf '%s\n' "$stamp" >"$export_dir/export-stamp"
 cp "$kit_scripts/export.py" "$kit_scripts/coreml_prod_op.py" "$export_dir/"
 chmod u+w "$export_dir"/*.py
 (
@@ -99,12 +134,17 @@ chmod u+w "$export_dir"/*.py
         "$export_project/.venv/bin/python" export.py
 )
 
-rm -rf "$models_dir"
-mkdir -p "$models_dir"
-cp "$export_dir/models/manifest.json" "$models_dir/"
-cp "$upstream_dir/LICENSE.txt" "$models_dir/LICENSE.txt"
+# Compile into a sibling directory and swap it in last.
+partial_dir="$models_dir.partial"
+rm -rf "$partial_dir"
+mkdir -p "$partial_dir"
+cp "$export_dir/models/manifest.json" "$partial_dir/"
+cp "$upstream_dir/LICENSE.txt" "$partial_dir/LICENSE.txt"
 for model in encoder uncert readout decoder maskencoder objsummary; do
-    xcrun coremlcompiler compile "$export_dir/models/$model.mlpackage" "$models_dir/"
+    xcrun coremlcompiler compile "$export_dir/models/$model.mlpackage" "$partial_dir/"
 done
+printf '%s\n' "$stamp" >"$partial_dir/export-stamp"
+rm -rf "$models_dir"
+mv "$partial_dir" "$models_dir"
 
 printf 'Core ML models (%sx%s) ready at %s\n' "$width" "$height" "$models_dir"
