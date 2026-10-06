@@ -236,10 +236,19 @@ public final class MattingWorker: @unchecked Sendable {
         return snapshot
     }
 
-    public var statusVersion: UInt32 {
+    /// The current phase without copying the rest of the snapshot.
+    public func currentPhase() -> Phase {
         condition.lock()
         defer { condition.unlock() }
-        return version
+        return snapshot.phase
+    }
+
+    /// The snapshot together with its version, read under one lock so the
+    /// version always belongs to that snapshot.
+    public func versionedStatus() -> (snapshot: StatusSnapshot, version: UInt32) {
+        condition.lock()
+        defer { condition.unlock() }
+        return (snapshot, version)
     }
 
     // MARK: - Worker loop

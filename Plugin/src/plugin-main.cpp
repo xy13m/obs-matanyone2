@@ -391,17 +391,23 @@ void filter_destroy(void *data) {
     delete state;
 }
 
-// Polls the worker status a few times per second and pushes the text into the
-// properties panel when it changed.
+// Reads the phase every tick, so filter_render gates the matte on the current
+// phase, and polls the full status a few times per second to push the text
+// into the properties panel when it changed.
 void filter_tick(void *data, float seconds) {
     auto *state = static_cast<filter_state *>(data);
     if (!state)
         return;
+    const int32_t phase = state->context ? ma2_get_phase(state->context) : MA2_PHASE_ERROR;
+    {
+        std::lock_guard lock(state->mutex);
+        state->status.phase = phase;
+    }
+
     state->tick_accumulator += seconds;
-    const bool tracking = state->status.phase == MA2_PHASE_TRACKING;
     // Rebuilding the properties view interrupts slider drags, so refresh
     // slowly while tracking and quickly during the countdowns.
-    const float interval = tracking ? 2.0f : 0.5f;
+    const float interval = phase == MA2_PHASE_TRACKING ? 2.0f : 0.5f;
     if (state->tick_accumulator < interval)
         return;
     state->tick_accumulator = 0.0f;

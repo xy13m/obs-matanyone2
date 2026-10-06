@@ -123,6 +123,11 @@ typedef struct ma2_status {
 
 void ma2_get_status(ma2_context_t context, ma2_status *out);
 
+/* The current phase (enum ma2_phase). Takes a lock and copies one integer, so
+   the plugin can call it on every tick, unlike ma2_get_status, which formats
+   strings. */
+int32_t ma2_get_phase(ma2_context_t context);
+
 /* Capture-to-display latency measured by the renderer in aligned mode. */
 void ma2_set_display_latency(ma2_context_t context, float milliseconds);
 
